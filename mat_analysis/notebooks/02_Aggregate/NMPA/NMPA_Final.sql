@@ -1,0 +1,76 @@
+-- Databricks notebook source
+-- DBTITLE 1,Final step to accommodate the missing rows
+-- # dbutils.widgets.text("db_source", "", "db_source")
+-- # db_source = dbutils.widgets.get("db_source")
+
+-- # dbutils.widgets.text("rp_startdate", "", "rp_startdate")
+-- # rp_startdate = dbutils.widgets.get("rp_startdate")
+
+-- # dbutils.widgets.text("rp_enddate", "", "rp_enddate")
+-- # rp_enddate = dbutils.widgets.get("rp_enddate")
+
+-- # dbutils.widgets.text("outSchema", "", "outSchema")
+-- # outSchema = dbutils.widgets.get("outSchema")
+
+-- # params = {'db_source': str(db_source), 'rp_startdate' : str(rp_startdate), 'rp_enddate': str(rp_enddate), 'outSchema' : str(outSchema)}
+-- # print(params)
+
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Final step to accommodate the missing rows
+-- MAGIC %sql
+-- MAGIC -- This would benefit from comments. I believe it's inserting rows with 0 counts.
+-- MAGIC
+-- MAGIC -- INSERT INTO $outSchema.NMPA_CSV
+-- MAGIC
+-- MAGIC -- SELECT f.Org_Code
+-- MAGIC --   , f.Org_Name
+-- MAGIC --   , f.Org_Level  
+-- MAGIC --   , '$rp_startdate' AS ReportingPeriodStartDate
+-- MAGIC --   , '$rp_enddate' AS ReportingPeriodEndDate
+-- MAGIC --   , 'Birth' AS IndicatorFamily
+-- MAGIC --   , f.Indicator
+-- MAGIC --   , f.Currency
+-- MAGIC --   , 0 AS Value
+-- MAGIC --   , current_timestamp() AS CreatedAt
+-- MAGIC   
+-- MAGIC -- FROM (
+-- MAGIC   
+-- MAGIC -- SELECT * 
+-- MAGIC -- FROM (SELECT DISTINCT Org_Code, Org_Name, Org_Level FROM $outSchema.NMPA_CSV ) t
+-- MAGIC   
+-- MAGIC -- --   cross join (
+-- MAGIC -- --     SELECT 'Provider' AS Org_Level
+-- MAGIC -- --     UNION
+-- MAGIC -- --     SELECT 'MBRRACE Grouping' AS Org_Level
+-- MAGIC -- --     UNION
+-- MAGIC -- --     SELECT 'Local Maternity System' AS Org_Level
+-- MAGIC -- --     UNION
+-- MAGIC -- --     SELECT 'NHS England (Region)' AS Org_Level
+-- MAGIC -- --     UNION
+-- MAGIC -- --     SELECT 'National' AS Org_Level
+-- MAGIC -- --     ) x
+-- MAGIC
+-- MAGIC --   cross join  (
+-- MAGIC --     SELECT 'Transfer_AMU_Obstetric' AS indicator
+-- MAGIC --     UNION
+-- MAGIC --     SELECT 'Transfer_Home_Obstetric' AS indicator
+-- MAGIC --     UNION
+-- MAGIC --     SELECT 'Transfer_FMU_Obstetric' AS indicator
+-- MAGIC --     UNION
+-- MAGIC --     SELECT 'Transfer_Midwife_Obstetric' AS indicator
+-- MAGIC --     ) y
+-- MAGIC
+-- MAGIC --   cross join  (
+-- MAGIC --     SELECT 'Denominator' AS Currency
+-- MAGIC --     UNION
+-- MAGIC --     SELECT 'Numerator' AS Currency
+-- MAGIC --     UNION
+-- MAGIC --     SELECT 'Rate' AS Currency
+-- MAGIC --     ) z
+-- MAGIC
+-- MAGIC -- EXCEPT
+-- MAGIC -- SELECT DISTINCT Org_Code, Org_Name, Org_Level, indicator, Currency FROM $outSchema.NMPA_CSV
+-- MAGIC -- ) f
+-- MAGIC

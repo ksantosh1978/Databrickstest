@@ -1,0 +1,914 @@
+-- Databricks notebook source
+-- DBTITLE 1,Widgets
+-- CREATE WIDGET TEXT RPBegindate DEFAULT "2019-04-01";
+-- CREATE WIDGET TEXT RPEnddate DEFAULT "2019-04-30";
+-- CREATE WIDGET TEXT dbSchema DEFAULT "mat_cur_clear"
+-- CREATE WIDGET TEXT outSchema DEFAULT "mat_analysis"
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC from datetime import datetime
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Recover reporting period parameters from widget
+-- MAGIC %python
+-- MAGIC RPBegindate = dbutils.widgets.get("RPBegindate")
+-- MAGIC RPEnddate = dbutils.widgets.get("RPEnddate")
+-- MAGIC dbSchema = dbutils.widgets.get("dbSchema")
+-- MAGIC outSchema = dbutils.widgets.get("outSchema")
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Truncate DQ tables
+TRUNCATE TABLE $outSchema.zStaging_DQ_Defaults;
+TRUNCATE TABLE $outSchema.zStaging_DQ_StandardMissing;
+TRUNCATE TABLE $outSchema.zStaging_DQ_CustomMissingDenoms;
+TRUNCATE TABLE $outSchema.zStaging_DQ_StandardDenoms;
+TRUNCATE TABLE $outSchema.zStaging_DQ_Invalid;
+TRUNCATE TABLE $outSchema.zStaging_DQ;
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Defaults - dictionary
+-- MAGIC %python
+-- MAGIC #TODO: replace with TOS reference data? - PE - The table name is only in the right format (e.g. msd001motherdemog) in the name of the tabs
+-- MAGIC # in csds_dq this information is pulled from a reference table in dss_corporate
+-- MAGIC
+-- MAGIC DefaultDict = {
+-- MAGIC 'M000020':('OrgIDProvider','msd000header',"'89997','89999'"),
+-- MAGIC 'M001030':('OrgIDResidenceResp','msd001motherdemog',"'Q99','X98'"),
+-- MAGIC 'M001070':('EthnicCategoryMother','msd001motherdemog',"'99'"),
+-- MAGIC 'M002010':('OrgCodeGMPMother','msd002gp',"'V81997','V81998','V81999'"),
+-- MAGIC 'M002040':('OrgIDGPPrac','msd002gp',"'Q99','X98'"),
+-- MAGIC 'M004010':('OvsVisChCat','msd004overseasvischargcat',"'9'"),
+-- MAGIC 'M101010':('OrgIDComm','msd101pregnancybooking',"'VPP00','XMD00','YDD82'"),
+-- MAGIC 'M101050':('OrgSiteIDBooking','msd101pregnancybooking',"'ZZ201','ZZ203','ZZ888','ZZ999'"),
+-- MAGIC 'M101090':('OrgIDRecv','msd101pregnancybooking',"'ZZ201'"),
+-- MAGIC 'M101190':('EmploymentStatusPartner','msd101pregnancybooking',"'UU'"),
+-- MAGIC 'M102060':('OrgSiteIDPlannedDelivery','msd102matcareplan',"'ZZ201','ZZ203','ZZ888'"),
+-- MAGIC 'M102070':('PlannedDeliverySetting','msd102matcareplan',"'99'"),
+-- MAGIC 'M102080':('ReasonChangeDelSettingAnt','msd102matcareplan',"'99'"),
+-- MAGIC 'M103070':('FetalOrder','msd103datingscan',"'UU'"),
+-- MAGIC 'M103090':('OrgIDDatingUltrasound','msd103datingscan',"'89997','89999'"),
+-- MAGIC 'M105050':('FetalOrder','msd105provdiagnosispreg',"'UU'"),
+-- MAGIC 'M106060':('FetalOrder','msd106diagnosispreg',"'UU'"),
+-- MAGIC 'M109020':('FetalOrder','msd109findingobsmother',"'UU'"),
+-- MAGIC 'M201030':('OrgIDComm','msd201carecontactpreg',"'VPP00','XMD00','YDD82'"),
+-- MAGIC 'M201040':('AdminCatCode','msd201carecontactpreg',"'98','99'"),
+-- MAGIC 'M201100':('OrgSiteIDOfTreat','msd201carecontactpreg',"'89997','89999','R9998'"),
+-- MAGIC 'M201110':('GPTherapyInd','msd201carecontactpreg',"'Z'"),
+-- MAGIC 'M202040':('FetalOrder','msd202careactivitypreg',"'UU'"),
+-- MAGIC 'M301010':('OrgSiteIDIntra','msd301labourdelivery',"'ZZ201','ZZ203','ZZ888'"),
+-- MAGIC 'M301020':('SettingIntraCare','msd301labourdelivery',"'99'"),
+-- MAGIC 'M301030':('ReasonChangeDelSettingLab','msd301labourdelivery',"'98','99'"),
+-- MAGIC 'M301040':('LabourOnsetMethod','msd301labourdelivery',"'9'"),
+-- MAGIC 'M301130':('AdmMethCodeMothDelHospProvSpell','msd301labourdelivery',"'98','99'"),
+-- MAGIC 'M301160':('DischMethCodeMothPostDelHospProvSpell','msd301labourdelivery',"'8','9'"),
+-- MAGIC 'M301170':('DischDestCodeMothPostDelHospProvSpell','msd301labourdelivery',"'98','99'"),
+-- MAGIC 'M302060':('FetalOrder','msd302careactivitylabdel',"'UU'"),
+-- MAGIC 'M401050':('PersonPhenSex','msd401babydemographics',"'X'"),
+-- MAGIC 'M401060':('EthnicCategoryBaby','msd401babydemographics',"'99'"),
+-- MAGIC 'M401100':('BirthOrderMaternitySUS','msd401babydemographics',"'UU'"),
+-- MAGIC 'M401130':('FetusPresentation','msd401babydemographics','4'),
+-- MAGIC 'M401170':('OrgSiteIDActualDelivery','msd401babydemographics',"'ZZ777'"),
+-- MAGIC 'M401180':('SettingPlaceBirth','msd401babydemographics',"'99'"),
+-- MAGIC 'M501030':('SourceAdmCodeHospProvSpell','msd501hospprovspell',"'98','99'"),
+-- MAGIC 'M501040':('PatientClassCode','msd501hospprovspell',"'8'"),
+-- MAGIC 'M501050':('AdmMethCodeHospProvSpell','msd501hospprovspell',"'98','99'"),
+-- MAGIC 'M501080':('DischMethCodeHospProvSpell','msd501hospprovspell',"'8','9'"),
+-- MAGIC 'M501090':('DischDestCodeHospProvSpell','msd501hospprovspell',"'98','99'"),
+-- MAGIC 'M502010':('OrgIDComm','msd502hospspellcomm',"'VPP00','XMD00','YDD82'"),
+-- MAGIC 'M503050':('OrgSiteIDOfTreat','msd503wardstay',"'89997','89999','R9998'"),
+-- MAGIC 'M601050':('OrgIDComm','msd601anonselfassessment',"'VPP00','XMD00','YDD82'"),
+-- MAGIC 'M602040':('OrgIDComm','msd602anonfindings',"'VPP00','XMD00','YDD82'")
+-- MAGIC }
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Default - results
+-- MAGIC %python 
+-- MAGIC
+-- MAGIC #loop through each ID in the StandardTableDict dictionary and build sql statement
+-- MAGIC for UID, value  in DefaultDict.items():
+-- MAGIC   ItemName = (value[0])
+-- MAGIC   table = (value[1])
+-- MAGIC   PrimaryCodes = (value[2])
+-- MAGIC   if dbSchema == 'mat_pre_clear':
+-- MAGIC     recentSubs = ""
+-- MAGIC   elif dbSchema == 'testdata_mat_analysis_mat_pre_clear':
+-- MAGIC     recentSubs = ""
+-- MAGIC   else:
+-- MAGIC     recentSubs = " and UniqSubmissionID in (select UniqSubmissionID from {outSchema}.MostRecentSubmissions)".format(outSchema=outSchema)
+-- MAGIC     
+-- MAGIC   sql_line = "select UniqSubmissionID, '{UID}' as UID, count (*) as Default from {dbSchema}.{table} where RPStartDate = '{RPBegindate}' and {ItemName} in ({PrimaryCodes}){recentSubs} group by UniqSubmissionID".format(
+-- MAGIC     UID=UID, dbSchema=dbSchema, table=table, RPBegindate=RPBegindate, ItemName=ItemName, PrimaryCodes=PrimaryCodes, recentSubs=recentSubs
+-- MAGIC   )
+-- MAGIC    
+-- MAGIC   sql_insert = "insert into {outSchema}.zStaging_DQ_Defaults {sql_line}".format(outSchema=outSchema, sql_line=sql_line)
+-- MAGIC   
+-- MAGIC   print("{table} - {UID} - {ItemName}. Started: {now}".format(table=table, UID=UID, ItemName=ItemName, now=datetime.now()))
+-- MAGIC   print("--------------------------------")
+-- MAGIC   print(sql_insert)
+-- MAGIC   spark.sql(sql_insert)
+-- MAGIC   print("--------------------------------")
+-- MAGIC   print("{table} - {UID} - {ItemName}. Ended: {now}".format(table=table, UID=UID, ItemName=ItemName, now=datetime.now()))
+-- MAGIC   print("-------------DONE---------------")
+-- MAGIC
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Standard missing - dictionary
+-- MAGIC %python
+-- MAGIC
+-- MAGIC #TODO: do we need to run this on the header? PE 20190808
+-- MAGIC
+-- MAGIC MissingTableDict = {'msd000header': {'M000010':'Version',
+-- MAGIC                                      'M000020':'OrgIDProvider',
+-- MAGIC                                      'M000030':'OrgIDSubmit',
+-- MAGIC                                      'M000040':'PrimSystemInUse',
+-- MAGIC                                      'M000050':'RPStartDate',
+-- MAGIC                                      'M000060':'RPEndDate',
+-- MAGIC                                      'M000070':'FileCreationDate',
+-- MAGIC                                      'M000080':'FileCreationTime'},
+-- MAGIC                     'msd001motherdemog': {'M001901':'LPIDMother',
+-- MAGIC                                           'M001010':'OrgIDLPID',
+-- MAGIC                                           'M001020':'PersonBirthDateMother',
+-- MAGIC                                           'M001030':'OrgIDResidenceResp',
+-- MAGIC                                           'M001040':'NHSNumberMother',
+-- MAGIC                                           'M001050':'NHSNumberStatusMother',
+-- MAGIC                                           'M001060':'Postcode',
+-- MAGIC                                           'M001070':'EthnicCategoryMother',
+-- MAGIC                                           'M001080':'PersonDeathDateMother',
+-- MAGIC                                           'M001090':'PersonDeathTimeMother'},
+-- MAGIC                     'msd002gp': {'M002901':'LPIDMother',
+-- MAGIC                                  'M002010':'OrgCodeGMPMother',
+-- MAGIC                                  'M002020':'StartDateGMPReg',
+-- MAGIC                                  'M002030':'EndDateGMPReg',
+-- MAGIC                                  'M002040':'OrgIDGPPrac'},
+-- MAGIC                     'msd003socperscircumstances': {'M003901':'LPIDMother',
+-- MAGIC                                                    'M003010':'SocPerSNOMED',
+-- MAGIC                                                    'M003020':'SocPerDate'},
+-- MAGIC                     'msd004overseasvischargcat ': {'M004010':'OvsVisChCat',
+-- MAGIC                                                    'M004901':'LPIDMother',
+-- MAGIC                                                    'M004020':'OvsVisChCatAppDate'},
+-- MAGIC                     'msd101pregnancybooking': {'M101902':'PregnancyID',
+-- MAGIC                                                'M101901':'LPIDMother',
+-- MAGIC                                                'M101010':'OrgIDComm',
+-- MAGIC                                                'M101020':'AntenatalAppDate',
+-- MAGIC                                                'M101030':'PregFirstConDate',
+-- MAGIC                                                'M101240':'FolicAcidSupplement',
+-- MAGIC                                                'M101250':'DischargeDateMatService',
+-- MAGIC                                                'M101260':'DischReason',
+-- MAGIC                                                'M101040':'EDDAgreed',
+-- MAGIC                                                'M101130':'DisabilityIndMother',
+-- MAGIC                                                'M101050':'OrgSiteIDBooking',
+-- MAGIC                                                'M101060':'EDDMethodAgreed',
+-- MAGIC                                                'M101070':'SourceRefMat',
+-- MAGIC                                                'M101080':'OrgIDProvOrigin',
+-- MAGIC                                                'M101090':'OrgIDRecv',
+-- MAGIC                                                'M101100':'ReasonLateBooking',
+-- MAGIC                                                'M101110':'PregFirstContactCareProfType',
+-- MAGIC                                                'M101120':'LastMenstrualPeriodDate',
+-- MAGIC                                                'M101140':'LangCode',
+-- MAGIC                                                'M101150':'MHPredictionDetectionIndMother',
+-- MAGIC                                                'M101160':'ComplexSocialFactorsInd',
+-- MAGIC                                                'M101170':'EmploymentStatusMother',
+-- MAGIC                                                'M101180':'SupportStatusIndMother',
+-- MAGIC                                                'M101190':'EmploymentStatusPartner',
+-- MAGIC                                                'M101200':'PreviousCaesareanSections',
+-- MAGIC                                                'M101210':'PreviousLiveBirths',
+-- MAGIC                                                'M101220':'PreviousStillBirths',
+-- MAGIC                                                'M101230':'PreviousLossesLessThan24Weeks'},
+-- MAGIC                    'msd102matcareplan': {'M102902':'PregnancyID',
+-- MAGIC                                          'M102010':'CarePlanDate',
+-- MAGIC                                          'M102020':'CarePlanType',
+-- MAGIC                                          'M102030':'MatPersCarePlanInd',
+-- MAGIC                                          'M102040':'ContCarePathInd',
+-- MAGIC                                          'M102909':'CareProfLID',
+-- MAGIC                                          'M102050':'TeamLocalID',
+-- MAGIC                                          'M102060':'OrgSiteIDPlannedDelivery',
+-- MAGIC                                          'M102070':'PlannedDeliverySetting',
+-- MAGIC                                          'M102080':'ReasonChangeDelSettingAnt'},
+-- MAGIC                    'msd103datingscan': {'M103050':'NoFetusesDatingUltrasound',
+-- MAGIC                                         'M103060':'LocalFetalID',
+-- MAGIC                                         'M103070':'FetalOrder',
+-- MAGIC                                         'M103080':'AbnormalityDatingUltrasound',
+-- MAGIC                                         'M103090':'OrgIDDatingUltrasound',
+-- MAGIC                                         'M103902':'PregnancyID',
+-- MAGIC                                         'M103010':'ActivityOfferDateUltrasound',
+-- MAGIC                                         'M103020':'OfferStatusDatingUltrasound',
+-- MAGIC                                         'M103030':'ProcedureDateDatingUltrasound',
+-- MAGIC                                         'M103040':'GestationDatingUltrasound'},
+-- MAGIC                    'msd104codedscoreasspreg': {'M104902':'PregnancyID',
+-- MAGIC                                                'M104010':'ToolTypeSNOMED',
+-- MAGIC                                                'M104020':'Score',
+-- MAGIC                                                'M104030':'CompDate'},
+-- MAGIC                    'msd105provdiagnosispreg': {'M105902':'PregnancyID',
+-- MAGIC                                                'M105010':'DiagScheme',
+-- MAGIC                                                'M105020':'ProvDiag',
+-- MAGIC                                                'M105030':'ProvDiagDate',
+-- MAGIC                                                'M105040':'LocalFetalID',
+-- MAGIC                                                'M105050':'FetalOrder'},
+-- MAGIC                    'msd106diagnosispreg': {'M106020':'Diag',
+-- MAGIC                                            'M106030':'ComplicatingDiagInd',
+-- MAGIC                                            'M106040':'DiagDate',
+-- MAGIC                                            'M106050':'LocalFetalID',
+-- MAGIC                                            'M106060':'FetalOrder',
+-- MAGIC                                            'M106902':'PregnancyID',
+-- MAGIC                                            'M106010':'DiagScheme'},
+-- MAGIC                    'msd107medhistory': {'M107902':'PregnancyID',
+-- MAGIC                                         'M107010':'DiagScheme',
+-- MAGIC                                         'M107020':'PrevDiag',
+-- MAGIC                                         'M107030':'DiagDate'},
+-- MAGIC                    'msd108famhistbooking': {'M108902':'PregnancyID',
+-- MAGIC                                             'M108010':'SituationScheme',
+-- MAGIC                                             'M108020':'Situation'},
+-- MAGIC                    'msd109findingobsmother': {'M109050':'FindingCode',
+-- MAGIC                                               'M109060':'ObsDate',
+-- MAGIC                                               'M109070':'ObsScheme',
+-- MAGIC                                               'M109080':'ObsCode',
+-- MAGIC                                               'M109090':'ObsValue',
+-- MAGIC                                               'M109100':'UCUMUnit',
+-- MAGIC                                               'M109902':'PregnancyID',
+-- MAGIC                                               'M109010':'LocalFetalID',
+-- MAGIC                                               'M109020':'FetalOrder',
+-- MAGIC                                               'M109030':'FindingDate',
+-- MAGIC                                               'M109040':'FindingScheme'},
+-- MAGIC                    'msd201carecontactpreg': {'M201903':'CareConID',
+-- MAGIC                                              'M201902':'PregnancyID',
+-- MAGIC                                              'M201010':'CContactDate',
+-- MAGIC                                              'M201020':'CContactTime',
+-- MAGIC                                              'M201030':'OrgIDComm',
+-- MAGIC                                              'M201040':'AdminCatCode',
+-- MAGIC                                              'M201050':'ContactDuration',
+-- MAGIC                                              'M201060':'ConsultType',
+-- MAGIC                                              'M201070':'CCSubject',
+-- MAGIC                                              'M201080':'Medium',
+-- MAGIC                                              'M201090':'LocCode',
+-- MAGIC                                              'M201100':'OrgSiteIDOfTreat',
+-- MAGIC                                              'M201110':'GPTherapyInd',
+-- MAGIC                                              'M201120':'AttendCode',
+-- MAGIC                                              'M201130':'CancelDate',
+-- MAGIC                                              'M201140':'CancelReason',
+-- MAGIC                                              'M201150':'ReplApptOffDate',
+-- MAGIC                                              'M201160':'ReplApptDate'},
+-- MAGIC                    'msd202careactivitypreg': {'M202010':'TeamLocalID',
+-- MAGIC                                               'M202904':'CareActIDMother',
+-- MAGIC                                               'M202903':'CareConID',
+-- MAGIC                                               'M202909':'CareProfLID',
+-- MAGIC                                               'M202020':'ActivityDuration',
+-- MAGIC                                               'M202030':'LocalFetalID',
+-- MAGIC                                               'M202040':'FetalOrder',
+-- MAGIC                                               'M202050':'ProcedureScheme',
+-- MAGIC                                               'M202110':'ObsValue',
+-- MAGIC                                               'M202060':'ProcedureCode',
+-- MAGIC                                               'M202070':'FindingScheme',
+-- MAGIC                                               'M202120':'UCUMUnit',
+-- MAGIC                                               'M202080':'FindingCode',
+-- MAGIC                                               'M202090':'ObsScheme',
+-- MAGIC                                               'M202100':'ObsCode'},
+-- MAGIC                    'msd203codedscoreasscontact': {'M203904':'CareActIDMother',
+-- MAGIC                                                   'M203010':'ToolTypeSNOMED',
+-- MAGIC                                                   'M203020':'Score'},
+-- MAGIC                    'msd301labourdelivery': {'M301130':'AdmMethCodeMothDelHospProvSpell',
+-- MAGIC                                             'M301140':'DischargeDateMotherHosp',
+-- MAGIC                                             'M301150':'DischargeTimeMotherHosp',
+-- MAGIC                                             'M301160':'DischMethCodeMothPostDelHospProvSpell',
+-- MAGIC                                             'M301170':'DischDestCodeMothPostDelHospProvSpell',
+-- MAGIC                                             'M301180':'OrgIDPostnatalPathLeadProvider',
+-- MAGIC                                             'M301905':'LabourDeliveryID',
+-- MAGIC                                             'M301902':'PregnancyID',
+-- MAGIC                                             'M301010':'OrgSiteIDIntra',
+-- MAGIC                                             'M301020':'SettingIntraCare',
+-- MAGIC                                             'M301030':'ReasonChangeDelSettingLab',
+-- MAGIC                                             'M301040':'LabourOnsetMethod',
+-- MAGIC                                             'M301050':'LabourOnsetDate',
+-- MAGIC                                             'M301060':'LabourOnsetTime',
+-- MAGIC                                             'M301070':'CaesareanDate',
+-- MAGIC                                             'M301080':'CaesareanTime',
+-- MAGIC                                             'M301090':'StartDateMotherDeliveryHospProvSpell',
+-- MAGIC                                             'M301100':'StartTimeMotherDeliveryHospProvSpell',
+-- MAGIC                                             'M301110':'DecisionToDeliverDate',
+-- MAGIC                                             'M301120':'DecisionToDeliverTime'},
+-- MAGIC                    'msd302careactivitylabdel': {'M302120':'ObsScheme',
+-- MAGIC                                                 'M302130':'ObsCode',
+-- MAGIC                                                 'M302140':'ObsValue',
+-- MAGIC                                                 'M302150':'UCUMUnit',
+-- MAGIC                                                 'M302905':'LabourDeliveryID',
+-- MAGIC                                                 'M302010':'ClinInterDateMother',
+-- MAGIC                                                 'M302020':'ClinInterTimeMother',
+-- MAGIC                                                 'M302030':'ActivityDuration',
+-- MAGIC                                                 'M302909':'CareProfLID',
+-- MAGIC                                                 'M302040':'TeamLocalID',
+-- MAGIC                                                 'M302050':'LocalFetalID',
+-- MAGIC                                                 'M302060':'FetalOrder',
+-- MAGIC                                                 'M302070':'MatCritInd',
+-- MAGIC                                                 'M302080':'ProcedureScheme',
+-- MAGIC                                                 'M302090':'ProcedureCode',
+-- MAGIC                                                 'M302100':'FindingScheme',
+-- MAGIC                                                 'M302110':'FindingCode'},
+-- MAGIC                    'msd401babydemographics': {'M401906':'LPIDBaby',
+-- MAGIC                                               'M401905':'LabourDeliveryID',
+-- MAGIC                                               'M401010':'OrgIDLocalPatientIdBaby',
+-- MAGIC                                               'M401020':'PersonBirthDateBaby',
+-- MAGIC                                               'M401030':'PersonBirthTimeBaby',
+-- MAGIC                                               'M401040':'PregOutcome',
+-- MAGIC                                               'M401050':'PersonPhenSex',
+-- MAGIC                                               'M401060':'EthnicCategoryBaby',
+-- MAGIC                                               'M401070':'NHSNumberBaby',
+-- MAGIC                                               'M401080':'NHSNumberStatusBaby',
+-- MAGIC                                               'M401090':'LocalFetalID',
+-- MAGIC                                               'M401100':'BirthOrderMaternitySUS',
+-- MAGIC                                               'M401110':'PersonDeathDateBaby',
+-- MAGIC                                               'M401120':'PersonDeathTimeBaby',
+-- MAGIC                                               'M401130':'FetusPresentation',
+-- MAGIC                                               'M401140':'GestationLengthBirth',
+-- MAGIC                                               'M401150':'DeliveryMethodCode',
+-- MAGIC                                               'M401160':'WaterDeliveryInd',
+-- MAGIC                                               'M401170':'OrgSiteIDActualDelivery',
+-- MAGIC                                               'M401909':'CareProfLIDDel',
+-- MAGIC                                               'M401180':'SettingPlaceBirth',
+-- MAGIC                                               'M401190':'BabyFirstFeedDate',
+-- MAGIC                                               'M401200':'BabyFirstFeedTime',
+-- MAGIC                                               'M401210':'BabyFirstFeedIndCode',
+-- MAGIC                                               'M401220':'SkinToSkinContact1HourInd',
+-- MAGIC                                               'M401230':'DischargeDateBabyHosp',
+-- MAGIC                                               'M401240':'DischargeTimeBabyHosp'},
+-- MAGIC                    'msd402neonataladmission': {'M402906':'LPIDBaby',
+-- MAGIC                                                'M402010':'NeonatalTransferStartDate',
+-- MAGIC                                                'M402020':'NeonatalTransferStartTime',
+-- MAGIC                                                'M402030':'OrgSiteIDAdmittingNeonatal',
+-- MAGIC                                                'M402040':'NeoCritCareInd'},
+-- MAGIC                    'msd403provdiagneonatal': {'M403010':'DiagScheme',
+-- MAGIC                                               'M403906':'LPIDBaby',
+-- MAGIC                                                'M403020':'ProvDiag',
+-- MAGIC                                                'M403030':'ProvDiagDate'},
+-- MAGIC                    'msd404diagnosisneonatal': {'M404906':'LPIDBaby',
+-- MAGIC                                                'M404010':'DiagScheme',
+-- MAGIC                                                'M404020':'Diag',
+-- MAGIC                                                'M404030':'DiagDate'},
+-- MAGIC                    'msd405careactivitybaby': {'M405090':'FindingCode',
+-- MAGIC                                               'M405100':'ObsScheme',
+-- MAGIC                                               'M405110':'ObsCode',
+-- MAGIC                                               'M405120':'ObsValue',
+-- MAGIC                                               'M405130':'UCUMUnit',
+-- MAGIC                                               'M405140':'OrgIDBloodScreeningLab',
+-- MAGIC                                               'M405907':'CareActIDBaby',
+-- MAGIC                                               'M405906':'LPIDBaby',
+-- MAGIC                                               'M405010':'ClinInterDateBaby',
+-- MAGIC                                               'M405020':'ClinInterTimeBaby',
+-- MAGIC                                               'M405030':'ActivityDuration',
+-- MAGIC                                               'M405909':'CareProfLID',
+-- MAGIC                                               'M405040':'TeamLocalID',
+-- MAGIC                                               'M405050':'NNCritIncInd',
+-- MAGIC                                               'M405060':'ProcedureScheme',
+-- MAGIC                                               'M405070':'ProcedureCode',
+-- MAGIC                                               'M405080':'FindingScheme'},
+-- MAGIC                    'msd406codedscoreassbaby': {'M406907':'CareActIDBaby',
+-- MAGIC                                                'M406010':'ToolTypeSNOMED',
+-- MAGIC                                                'M406020':'Score'},
+-- MAGIC                    'msd501hospprovspell': {'M501908':'HospProvSpellNum',
+-- MAGIC                                            'M501902':'PregnancyID',
+-- MAGIC                                            'M501010':'StartDateHospProvSpell',
+-- MAGIC                                            'M501020':'StartTimeHospProvSpell',
+-- MAGIC                                            'M501030':'SourceAdmCodeHospProvSpell',
+-- MAGIC                                            'M501040':'PatientClassCode',
+-- MAGIC                                            'M501050':'AdmMethCodeHospProvSpell',
+-- MAGIC                                            'M501060':'DischDateHospProvSpell',
+-- MAGIC                                            'M501070':'DischTimeHospProvSpell',
+-- MAGIC                                            'M501080':'DischMethCodeHospProvSpell',
+-- MAGIC                                            'M501090':'DischDestCodeHospProvSpell'},
+-- MAGIC                    'msd502hospspellcomm': {'M502908':'HospProvSpellNum',
+-- MAGIC                                            'M502010':'OrgIDComm',
+-- MAGIC                                            'M502020':'StartDateOrgCodeComm',
+-- MAGIC                                            'M502030':'EndDateOrgCodeComm'},
+-- MAGIC                    'msd503wardstay': {'M503908':'HospProvSpellNum',
+-- MAGIC                                       'M503010':'StartDateWardStay',
+-- MAGIC                                       'M503020':'StartTimeWardStay',
+-- MAGIC                                       'M503030':'EndDateWardStay',
+-- MAGIC                                       'M503040':'EndTimeWardStay',
+-- MAGIC                                       'M503050':'OrgSiteIDOfTreat',
+-- MAGIC                                       'M503060':'WardCode'},
+-- MAGIC                    'msd504assignedcareprof': {'M504030':'EndDateAssCareProf',
+-- MAGIC                                               'M504040':'TreatFuncCodeMat',
+-- MAGIC                                               'M504908':'HospProvSpellNum',
+-- MAGIC                                               'M504909':'CareProfLID',
+-- MAGIC                                               'M504010':'TeamLocalID',
+-- MAGIC                                               'M504020':'StartDateAssCareProf'},
+-- MAGIC                    'msd601anonselfassessment': {'M601010':'CompDate',
+-- MAGIC                                                 'M601020':'ToolTypeSNOMED',
+-- MAGIC                                                 'M601030':'Score',
+-- MAGIC                                                 'M601040':'LocCode',
+-- MAGIC                                                 'M601050':'OrgIDComm'},
+-- MAGIC                    'msd602anonfindings': {'M602010':'ClinInterDate',
+-- MAGIC                                           'M602020':'FindingScheme',
+-- MAGIC                                           'M602030':'FindingCode',
+-- MAGIC                                           'M602040':'OrgIDComm'},
+-- MAGIC                    'msd901staffdetails': {'M901909':'CareProfLID',
+-- MAGIC                                           'M901010':'ProfRegCode',
+-- MAGIC                                           'M901020':'ProfRegID',
+-- MAGIC                                           'M901030':'StaffGroup',
+-- MAGIC                                           'M901040':'OccupationCode',
+-- MAGIC                                           'M901050':'JobRoleCode'}
+-- MAGIC }
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC def toLongDF(df):
+-- MAGIC   first = True
+-- MAGIC   while len(df.columns) > 1:
+-- MAGIC     if first:
+-- MAGIC       outdf = df.select(df.columns[:3])
+-- MAGIC     else:
+-- MAGIC       outdf = outdf.union(df.select(df.columns[:3]))
+-- MAGIC
+-- MAGIC     df = df.drop(*df.columns[1:3])
+-- MAGIC     first = False
+-- MAGIC     outdf = outdf.toDF("UniqSubmissionID", "UID", "Missing")
+-- MAGIC   
+-- MAGIC   return outdf
+-- MAGIC
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Standard missing - results
+-- MAGIC %python 
+-- MAGIC
+-- MAGIC if dbSchema == 'mat_pre_clear':
+-- MAGIC   recentSubs = ""
+-- MAGIC elif dbSchema == 'testdata_mat_analysis_mat_pre_clear':
+-- MAGIC   recentSubs = ""
+-- MAGIC else:
+-- MAGIC   recentSubs = " and UniqSubmissionID in (select UniqSubmissionID from {outSchema}.MostRecentSubmissions)".format(outSchema=outSchema)
+-- MAGIC
+-- MAGIC #first = True
+-- MAGIC
+-- MAGIC for table, subdict in MissingTableDict.items():
+-- MAGIC   fieldlist = []
+-- MAGIC   for UID, field in subdict.items():
+-- MAGIC     sql_line = "'{UID}', sum(case when {field} is null then 1 else 0 end)".format(UID=UID, field=field) #MAKE THIS 'NOT NULL' JUST FOR DEBUGGING
+-- MAGIC     fieldlist.append(sql_line)
+-- MAGIC     #print(sql_line)
+-- MAGIC     
+-- MAGIC   fieldStmtsUIDS = ','.join(fieldlist)
+-- MAGIC   sqlstmt = "select UniqSubmissionID,{fieldStmtsUIDS} from {dbSchema}.{table} where RPStartDate = '{RPBegindate}'{recentSubs} group by UniqSubmissionID".format(
+-- MAGIC     fieldStmtsUIDS=fieldStmtsUIDS, dbSchema=dbSchema, table=table, RPBegindate=RPBegindate, recentSubs=recentSubs
+-- MAGIC   )
+-- MAGIC   df = spark.sql(sqlstmt)
+-- MAGIC  
+-- MAGIC   #if first:
+-- MAGIC   missing = toLongDF(df)
+-- MAGIC   #  first = False
+-- MAGIC   #else:
+-- MAGIC   #  print("Hello")
+-- MAGIC   #  missing = missing.union(toLongDF(df))
+-- MAGIC   
+-- MAGIC   missing.createOrReplaceTempView("missing_sql")
+-- MAGIC   #del missing 
+-- MAGIC   
+-- MAGIC   sql_insert = "insert into {outSchema}.zStaging_DQ_StandardMissing select * from missing_sql".format(outSchema=outSchema)
+-- MAGIC   
+-- MAGIC   print("{table}. Started: {now}".format(table=table, now=datetime.now()))
+-- MAGIC   print("--------------------------------")
+-- MAGIC   print(sql_insert)  
+-- MAGIC   spark.sql(sql_insert)
+-- MAGIC   print("--------------------------------")
+-- MAGIC   print("{table}. Ended: {now}".format(table=table, now=datetime.now()))
+-- MAGIC   print("-------------DONE---------------")
+-- MAGIC
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Custom denoms and missing - dictionary
+-- MAGIC %python
+-- MAGIC #TODO: think about possible ways to elimate repetition of denominator rules
+-- MAGIC
+-- MAGIC CustomDenomDict = {
+-- MAGIC 'M001080':('msd001motherdemog','PersonDeathDateMother','PersonDeathDateMother is not null or PersonDeathTimeMother is not null'),
+-- MAGIC 'M001090':('msd001motherdemog','PersonDeathTimeMother','PersonDeathDateMother is not null or PersonDeathTimeMother is not null'),
+-- MAGIC 'M002010':('msd002gp','OrgCodeGMPMother','lower(OrgCodeGMPMother) not like "s%"'),
+-- MAGIC 'M002030':('msd002gp','EndDateGMPReg','EndDateGMPReg is not null'),
+-- MAGIC 'M102060':('msd102matcareplan','OrgSiteIDPlannedDelivery','OrgSiteIDPlannedDelivery is not null or CarePlanType = "06"'),
+-- MAGIC 'M102070':('msd102matcareplan','PlannedDeliverySetting','PlannedDeliverySetting is not null or CarePlanType = "06"'),
+-- MAGIC 'M102080':('msd102matcareplan','ReasonChangeDelSettingAnt','ReasonChangeDelSettingAnt is not null or CarePlanType = "06"'),
+-- MAGIC 'M103060':('msd103datingscan','LocalFetalID','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M103070':('msd103datingscan','FetalOrder','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M105040':('msd105provdiagnosispreg','LocalFetalID','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M105050':('msd105provdiagnosispreg','FetalOrder','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M106050':('msd106diagnosispreg','LocalFetalID','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M106060':('msd106diagnosispreg','FetalOrder','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M109010':('msd109findingobsmother','LocalFetalID','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M109020':('msd109findingobsmother','FetalOrder','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M109030':('msd109findingobsmother','FindingDate','FindingDate is not null or FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M109040':('msd109findingobsmother','FindingScheme','FindingDate is not null or FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M109050':('msd109findingobsmother','FindingCode','FindingDate is not null or FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M109060':('msd109findingobsmother','ObsDate','ObsDate is not null or ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M109070':('msd109findingobsmother','ObsScheme','ObsDate is not null or ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M109080':('msd109findingobsmother','ObsCode','ObsDate is not null or ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M109090':('msd109findingobsmother','ObsValue','ObsDate is not null or ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M109100':('msd109findingobsmother','UCUMUnit','ObsDate is not null or ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M201130':('msd201carecontactpreg','CancelDate','CancelDate is not null or CancelReason is not null or ReplApptOffDate is not null or ReplApptDate is not null'),
+-- MAGIC 'M201140':('msd201carecontactpreg','CancelReason','CancelDate is not null or CancelReason is not null or ReplApptOffDate is not null or ReplApptDate is not null'),
+-- MAGIC 'M201150':('msd201carecontactpreg','ReplApptOffDate','CancelDate is not null or CancelReason is not null or ReplApptOffDate is not null or ReplApptDate is not null'),
+-- MAGIC 'M201160':('msd201carecontactpreg','ReplApptDate','CancelDate is not null or CancelReason is not null or ReplApptOffDate is not null or ReplApptDate is not null'),
+-- MAGIC 'M202030':('msd202careactivitypreg','LocalFetalID','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M202040':('msd202careactivitypreg','FetalOrder','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M202050':('msd202careactivitypreg','ProcedureScheme','ProcedureScheme is not null or ProcedureCode is not null'),
+-- MAGIC 'M202060':('msd202careactivitypreg','ProcedureCode','ProcedureScheme is not null or ProcedureCode is not null'),
+-- MAGIC 'M202070':('msd202careactivitypreg','FindingScheme','FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M202080':('msd202careactivitypreg','FindingCode','FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M202090':('msd202careactivitypreg','ObsScheme','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M202100':('msd202careactivitypreg','ObsCode','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M202110':('msd202careactivitypreg','ObsValue','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M202120':('msd202careactivitypreg','UCUMUnit','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M302050':('msd302careactivitylabdel','LocalFetalID','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M302060':('msd302careactivitylabdel','FetalOrder','LocalFetalID is not null or FetalOrder is not null'),
+-- MAGIC 'M302080':('msd302careactivitylabdel','ProcedureScheme','ProcedureScheme is not null or ProcedureCode is not null'),
+-- MAGIC 'M302090':('msd302careactivitylabdel','ProcedureCode','ProcedureScheme is not null or ProcedureCode is not null'),
+-- MAGIC 'M302100':('msd302careactivitylabdel','FindingScheme','FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M302110':('msd302careactivitylabdel','FindingCode','FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M302120':('msd302careactivitylabdel','ObsScheme','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M302130':('msd302careactivitylabdel','ObsCode','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M302140':('msd302careactivitylabdel','ObsValue','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M302150':('msd302careactivitylabdel','UCUMUnit','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M401110':('msd401babydemographics','PersonDeathDateBaby','PersonDeathDateBaby is not null or PersonDeathTimeBaby is not null'),
+-- MAGIC 'M401120':('msd401babydemographics','PersonDeathTimeBaby','PersonDeathDateBaby is not null or PersonDeathTimeBaby is not null'),
+-- MAGIC 'M405060':('msd405careactivitybaby','ProcedureScheme','ProcedureScheme is not null or ProcedureCode is not null'),
+-- MAGIC 'M405070':('msd405careactivitybaby','ProcedureCode','ProcedureScheme is not null or ProcedureCode is not null'),
+-- MAGIC 'M405080':('msd405careactivitybaby','FindingScheme','FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M405090':('msd405careactivitybaby','FindingCode','FindingScheme is not null or FindingCode is not null'),
+-- MAGIC 'M405100':('msd405careactivitybaby','ObsScheme','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M405110':('msd405careactivitybaby','ObsCode','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M405120':('msd405careactivitybaby','ObsValue','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null'),
+-- MAGIC 'M405130':('msd405careactivitybaby','UCUMUnit','ObsScheme is not null or ObsCode is not null or ObsValue is not null or UCUMUnit is not null')
+-- MAGIC }
+-- MAGIC
+-- MAGIC #print (CustomDenomDict)
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Custom denoms and missing - results
+-- MAGIC %python 
+-- MAGIC
+-- MAGIC if dbSchema == 'mat_pre_clear':
+-- MAGIC   recentSubs = ""
+-- MAGIC elif dbSchema == 'testdata_mat_analysis_mat_pre_clear':
+-- MAGIC   recentSubs = ""
+-- MAGIC else:
+-- MAGIC   recentSubs = " and UniqSubmissionID in (select UniqSubmissionID from {outSchema}.MostRecentSubmissions)".format(outSchema=outSchema)
+-- MAGIC
+-- MAGIC first = True
+-- MAGIC
+-- MAGIC #loop through each ID in the CustomTableDict dictionary and build sql statement
+-- MAGIC for UID, value  in CustomDenomDict.items():
+-- MAGIC   table = (value[0])
+-- MAGIC   field_name = (value[1])
+-- MAGIC   denom_clause = (value[2])
+-- MAGIC   sql_line = "select UniqSubmissionID, '{table}' as Table, '{UID}' as UID, sum(case when {field_name} is null and ({denom_clause}) then '1' else '0' end) as CustomMissing, sum(case when ({denom_clause}) then '1' else '0' end) as Denominator from {dbSchema}.{table} where RPStartDate = '{RPBegindate}'{recentSubs} group by UniqSubmissionID ".format(
+-- MAGIC     table=table, UID=UID, field_name=field_name, denom_clause=denom_clause, dbSchema=dbSchema, RPBegindate=RPBegindate, recentSubs=recentSubs
+-- MAGIC   )
+-- MAGIC  
+-- MAGIC   sql_insert = "insert into {outSchema}.zStaging_DQ_CustomMissingDenoms {sql_line}".format(
+-- MAGIC     outSchema=outSchema, sql_line=sql_line
+-- MAGIC   )
+-- MAGIC   
+-- MAGIC   print("{table} - {UID} - {field_name}. Started: {now}".format(table=table, UID=UID, field_name=field_name, now=datetime.now()))
+-- MAGIC   print("--------------------------------")
+-- MAGIC   print(sql_insert)
+-- MAGIC   spark.sql(sql_insert)
+-- MAGIC   print("--------------------------------")
+-- MAGIC   print("{table} - {UID} - {field_name}. Ended: {now}".format(table=table, UID=UID, field_name=field_name, now=datetime.now()))
+-- MAGIC   print("-------------DONE---------------")
+-- MAGIC
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Standard denominators - dictionary
+-- MAGIC %python
+-- MAGIC
+-- MAGIC #TODO: replace with TOS reference data? - PE - The table name is only in the right format (e.g. msd001motherdemog) in the name of the tabs
+-- MAGIC
+-- MAGIC StandardTableDict = {
+-- MAGIC 'MSD000':'msd000header',
+-- MAGIC 'MSD001':'msd001motherdemog',
+-- MAGIC 'MSD002':'msd002gp',
+-- MAGIC 'MSD003':'msd003socperscircumstances',
+-- MAGIC 'MSD004':'msd004overseasvischargcat',
+-- MAGIC 'MSD101':'msd101pregnancybooking',
+-- MAGIC 'MSD102':'msd102matcareplan',
+-- MAGIC 'MSD103':'msd103datingscan',
+-- MAGIC 'MSD104':'msd104codedscoreasspreg',
+-- MAGIC 'MSD105':'msd105provdiagnosispreg',
+-- MAGIC 'MSD106':'msd106diagnosispreg',
+-- MAGIC 'MSD107':'msd107medhistory',
+-- MAGIC 'MSD108':'msd108famhistbooking',
+-- MAGIC 'MSD109':'msd109findingobsmother',
+-- MAGIC 'MSD201':'msd201carecontactpreg',
+-- MAGIC 'MSD202':'msd202careactivitypreg',
+-- MAGIC 'MSD203':'msd203codedscoreasscontact',
+-- MAGIC 'MSD301':'msd301labourdelivery',
+-- MAGIC 'MSD302':'msd302careactivitylabdel',
+-- MAGIC 'MSD401':'msd401babydemographics',
+-- MAGIC 'MSD402':'msd402neonataladmission',
+-- MAGIC 'MSD403':'msd403provdiagneonatal',
+-- MAGIC 'MSD404':'msd404diagnosisneonatal',
+-- MAGIC 'MSD405':'msd405careactivitybaby',
+-- MAGIC 'MSD406':'msd406codedscoreassbaby',
+-- MAGIC 'MSD501':'msd501hospprovspell',
+-- MAGIC 'MSD502':'msd502hospspellcomm',
+-- MAGIC 'MSD503':'msd503wardstay',
+-- MAGIC 'MSD504':'msd504assignedcareprof',
+-- MAGIC 'MSD601':'msd601anonselfassessment',
+-- MAGIC 'MSD602':'msd602anonfindings',
+-- MAGIC 'MSD901':'msd901staffdetails'
+-- MAGIC }
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Standard denominators  - results
+-- MAGIC %python 
+-- MAGIC
+-- MAGIC if dbSchema == 'mat_pre_clear':
+-- MAGIC   recentSubs = ""
+-- MAGIC elif dbSchema == 'testdata_mat_analysis_mat_pre_clear':
+-- MAGIC   recentSubs = ""
+-- MAGIC else:
+-- MAGIC   recentSubs = " and UniqSubmissionID in (select UniqSubmissionID from {outSchema}.MostRecentSubmissions)".format(outSchema=outSchema)
+-- MAGIC
+-- MAGIC first = True
+-- MAGIC
+-- MAGIC #loop through each ID in the StandardTableDict dictionary and build sql statement
+-- MAGIC for table  in StandardTableDict:
+-- MAGIC   table_name = StandardTableDict[table] #return the table name corresponding to the ID
+-- MAGIC   sql_line = "select UniqSubmissionID, '{table}' as Table, count ({table}_ID) as Denominator from {dbSchema}.{table_name} where RPStartDate = '{RPBegindate}'{recentSubs} group by UniqSubmissionID".format(
+-- MAGIC     table=table, dbSchema=dbSchema, table_name=table_name, RPBegindate=RPBegindate, recentSubs=recentSubs
+-- MAGIC   )
+-- MAGIC  
+-- MAGIC   sql_insert = "insert into {outSchema}.zStaging_DQ_StandardDenoms {sql_line}".format(outSchema=outSchema, sql_line=sql_line)
+-- MAGIC   
+-- MAGIC   print("{table}. Started: {now}".format(table=table, now=datetime.now()))
+-- MAGIC   print("--------------------------------")
+-- MAGIC   print(sql_insert)
+-- MAGIC   spark.sql(sql_insert)
+-- MAGIC   print("--------------------------------")
+-- MAGIC   print("{table}. Ended: {now}".format(table=table, now=datetime.now() ))
+-- MAGIC   print("-------------DONE---------------")
+-- MAGIC
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Invalid code
+-- MAGIC %python
+-- MAGIC sql_line = "select SUBMISSION_ID as UniqSubmissionID, substring(MESSAGE, 11, 7) as UID, count(*) as Invalid from dq.msds_anon a where CODE = 'MSDDEF3' and Submission_ID in (select UniqSubmissionID from {outSchema}.MostRecentSubmissions) and DATASET = 'msds' and not exists (select SUBMISSION_ID as UniqSubmissionID, TABLE, ROW_INDEX from dq.msds_anon b where ACTION = 'reject_record' and Submission_ID in (select UniqSubmissionID from {outSchema}.MostRecentSubmissions) and DATASET = 'msds' and a.SUBMISSION_ID = b.SUBMISSION_ID and a.TABLE = b.TABLE and a.ROW_INDEX = b.ROW_INDEX) group by SUBMISSION_ID, substring(MESSAGE, 11, 7)".format(outSchema=outSchema)
+-- MAGIC invalid = spark.sql(sql_line)
+-- MAGIC
+-- MAGIC invalid.createOrReplaceTempView("invalid_sql")
+-- MAGIC
+-- MAGIC spark.sql("insert into {outSchema}.zStaging_DQ_Invalid select * from invalid_sql".format(outSchema=outSchema))
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Create DQ aggregate view
+-- MAGIC %python
+-- MAGIC #Where there is a custom denominator the DQ_CustomDenomMissing table is used ahead of the DQ_StandardMissing or the DQ_StandardDenom tables
+-- MAGIC #'MSDDEF3' limits the dq data to msds warnings about invalid vales. FYI, 'MSDDEF4' warnings are about blank values, all other warnings are integrity-type checks (e.g. field X is before field Y)
+-- MAGIC #The 11th to 17th characters of the 'MSDDEF3' warnings always contain the UID of the field with an invalid value
+-- MAGIC
+-- MAGIC sql_line = """select 
+-- MAGIC MSD000.RPStartDate, 
+-- MAGIC MSD000.RPEndDate,
+-- MAGIC MSD000.OrgCodeProvider,
+-- MAGIC MSD000.UniqSubmissionID,
+-- MAGIC TOS.Data_Table as DataTable,
+-- MAGIC TOS.UID,
+-- MAGIC TOS.Data_Item_Name__Data_Dict_Element as DataItem
+-- MAGIC from {outSchema}.MostRecentSubmissions MSD000
+-- MAGIC cross join {outSchema}.TOSasRefData TOS
+-- MAGIC where TOS.UID not like 'MSD%'
+-- MAGIC """.format(outSchema=outSchema)
+-- MAGIC
+-- MAGIC basedq = spark.sql(sql_line)
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC import pandas as pd
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC pdbasedq = basedq.toPandas()
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC pddefault = spark.sql("select ifnull(UniqSubmissionID,0) UniqSubmissionID, UID, Default from {outSchema}.zStaging_DQ_Defaults".format(outSchema=outSchema)).toPandas()
+-- MAGIC pddefault['UniqSubmissionID'] = pddefault['UniqSubmissionID'].astype(int) #without making UniqSubmissionID an int, it won't join to pdbasedq
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC pdmissing = spark.sql("select ifnull(UniqSubmissionID,0) UniqSubmissionID, UID, Missing  from {outSchema}.zStaging_DQ_StandardMissing".format(outSchema=outSchema)).toPandas()
+-- MAGIC pdmissing['UniqSubmissionID'] = pdmissing['UniqSubmissionID'].astype(int) #without making UniqSubmissionID an int, it won't join to pdbasedq
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC pdcustomdenommissing = spark.sql("select ifnull(UniqSubmissionID,0) UniqSubmissionID, Table, UID, Missing, Denominator from {outSchema}.zStaging_DQ_CustomMissingDenoms".format(outSchema=outSchema)).toPandas()
+-- MAGIC pdcustomdenommissing['UniqSubmissionID'] = pdcustomdenommissing['UniqSubmissionID'].astype(int) #without making UniqSubmissionID an int, it won't join to pdbasedq
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC pdstandarddenom = spark.sql("select ifnull(UniqSubmissionID,0) UniqSubmissionID, Table, Denominator from {outSchema}.zStaging_DQ_StandardDenoms".format(outSchema=outSchema)).toPandas()
+-- MAGIC pdstandarddenom['UniqSubmissionID'] = pdstandarddenom['UniqSubmissionID'].astype(int) #without making UniqSubmissionID an int, it won't join to pdbasedq
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC pdinvalid = spark.sql("select ifnull(UniqSubmissionID,0) UniqSubmissionID, UID, Invalid from {outSchema}.zStaging_DQ_Invalid".format(outSchema=outSchema)).toPandas()
+-- MAGIC pdinvalid['UniqSubmissionID'] = pdinvalid['UniqSubmissionID'].astype(int) #without making UniqSubmissionID an int, it won't join to pdbasedq
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC pdbasedq["Table"] = pdbasedq["DataTable"].str.split(' ').str[0]
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC newframe = pd.merge(pdbasedq, pdstandarddenom, how='left', on=['Table', 'UniqSubmissionID'])
+
+-- COMMAND ----------
+
+-- MAGIC %python 
+-- MAGIC newframe2 = pd.merge(newframe, pdcustomdenommissing, how="left", on=["UID", "UniqSubmissionID"])
+-- MAGIC newframe2.rename(columns={'Denominator_y': 'CustomDenom', 'Denominator_x': 'TableDenom', 'Missing':'CustomMissing'}, inplace=True)
+-- MAGIC del newframe2['Table_y']
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC newframe3 = pd.merge(newframe2, pdmissing, how='left', on=["UID", "UniqSubmissionID"])
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC newframe4 = pd.merge(newframe3, pddefault, how='left', on=["UID", "UniqSubmissionID"])
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC newframe5 = pd.merge(newframe4, pdinvalid, how='left', on=["UID", "UniqSubmissionID"])
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC # 'ValueError: can not infer schema from empty dataset' at run time likely means there is no data for the specified start date. 
+-- MAGIC #%sql
+-- MAGIC #select max(RPStartDate) from mat_pre_clear.msd000header
+-- MAGIC #
+-- MAGIC newframe5_to_upload = spark.createDataFrame(newframe5)
+-- MAGIC newframe5_to_upload.write.insertInto("{outSchema}.zStaging_DQ".format(outSchema=outSchema))
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC newframe6 = newframe5
+-- MAGIC newframe6.CustomMissing.fillna(newframe6.Missing, inplace=True) #prioritise custom missing over standard
+-- MAGIC del newframe6['Missing']
+-- MAGIC newframe6.CustomDenom.fillna(newframe6.TableDenom, inplace=True) #prioritise custom denom over standard
+-- MAGIC del newframe6['TableDenom']
+-- MAGIC del newframe6['Table_x']
+-- MAGIC del newframe6['UniqSubmissionID']
+-- MAGIC newframe6.rename(columns={'CustomMissing': 'Missing', 'CustomDenom': 'Denominator'}, inplace=True)
+-- MAGIC newframe6.Missing.fillna(0, inplace=True)
+-- MAGIC newframe6.Default.fillna(0, inplace=True)
+-- MAGIC newframe6.Invalid.fillna(0, inplace=True)
+-- MAGIC newframe6.Denominator.fillna(0, inplace=True)
+-- MAGIC newframe6["Valid"] = newframe6["Denominator"] - newframe6["Missing"] - newframe6["Default"] - newframe6["Invalid"]
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC df = newframe6[['RPStartDate', 'RPEndDate', 'OrgCodeProvider', 'DataTable', 'UID', 'DataItem', 'Valid', 'Default', 'Invalid', 'Missing', 'Denominator']]
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC sdf_to_upload = spark.createDataFrame(df)
+-- MAGIC
+-- MAGIC sdf_to_upload.write.insertInto("{outSchema}.dq_csv".format(outSchema=outSchema)) 
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Second stage DQ - table level submission
+-- MAGIC %python
+-- MAGIC # removed else "ERROR" condition for valid and missing as spark 3 giving datatype mismatch error for string to int type
+-- MAGIC SQLcode = """with cte as 
+-- MAGIC (select 
+-- MAGIC   org_code, 
+-- MAGIC   datatable, 
+-- MAGIC   sum(denominator) as submitted, 
+-- MAGIC   ReportingPeriodEndDate, 
+-- MAGIC   ReportingPeriodStartDate 
+-- MAGIC   from {outSchema}.dq_csv 
+-- MAGIC   where ReportingPeriodEndDate = '{RPEnddate}'
+-- MAGIC   group by ReportingPeriodStartDate, ReportingPeriodEndDate, org_code, datatable
+-- MAGIC )
+-- MAGIC select 
+-- MAGIC   ReportingPeriodStartDate,
+-- MAGIC   ReportingPeriodEndDate,
+-- MAGIC   Org_Code,
+-- MAGIC   datatable,
+-- MAGIC   left(datatable, 6) as UID,
+-- MAGIC   concat(left(datatable, 6),' Table Submission') as DataItem,
+-- MAGIC   case when submitted > 0 then 1 when submitted = 0 then 0  end as Valid,
+-- MAGIC   0 as Default,
+-- MAGIC   0 as Invalid,
+-- MAGIC   case when submitted = 0 then 1 when submitted > 0 then 0  end as Missing, 
+-- MAGIC   1 as Denominator
+-- MAGIC   
+-- MAGIC   from cte""".format(outSchema=outSchema, RPEnddate=RPEnddate)
+-- MAGIC
+-- MAGIC tblsubs = spark.sql(SQLcode)
+-- MAGIC
+-- MAGIC tblsubs.write.insertInto("{outSchema}.dq_csv".format(outSchema=outSchema)) 
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Second stage DQ - provider level submission
+-- MAGIC %python
+-- MAGIC from pyspark.sql.types import StringType
+-- MAGIC import pyspark.sql.functions as f
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC CustomSubsList = ["R1F","R1H","R1K","RA2","RA3","RA4","RA7","RA9","RAE","RAJ","RAL","RAP","RAS","RAX","RBA","RBD","RBK","RBL","RBN","RBT","RBZ","RC1","RC9","RCB","RCD","RCF","RCX","RD1","RD3","RD8","RDD","RDE","RDU","RDZ","REF","REP","RF4","RFF","RFR","RFS","RGN","RGP","RGR","RGT","RH8","RHM","RHQ","RHU","RHW","RJ1","RJ2","RJ6","RJ7","RJC","RJE","RJL","RJN","RJR","RJZ","RK5","RK9","RKB","RKE","RL4","RLQ","RLT","RM1","RMC","RMP","RN3","RN5","RN7","RNA","RNL","RNQ","RNS","RNZ","RP5","RPA","RQ3","RQ8","RQM","RQW","RQX","RR7","RR8","RRF","RRK","RRV","RTD","RTE","RTF","RTG","RTH","RTK","RTP","RTR","RTX","RVJ","RVR","RVV","RVW","RVY","RW6","RWA","RWD","RWE","RWF","RWG","RWH","RWJ","RWP","RWW","RWY","RX1","RXC","RXF","RXH","RXK","RXL","RXN","RXP","RXQ","RXR","RXW","RY2","RYJ","RYR"]
+-- MAGIC
+-- MAGIC CustomSubsListDF = spark.createDataFrame(CustomSubsList, StringType())
+-- MAGIC CustomSubsListDF = CustomSubsListDF.selectExpr("value as OrgCodeProvider")
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC
+-- MAGIC CustomSubsInfoCode = """
+-- MAGIC select distinct 
+-- MAGIC ReportingPeriodStartDate, 
+-- MAGIC ReportingPeriodEndDate,
+-- MAGIC 'All' as datatable, 
+-- MAGIC 'All' as UID, 
+-- MAGIC 'Organisation Submission' as DataItem,
+-- MAGIC 0 as Valid,
+-- MAGIC 0 as Default,
+-- MAGIC 0 as Invalid,
+-- MAGIC 1 as Missing, 
+-- MAGIC 1 as Denominator
+-- MAGIC from {outSchema}.dq_csv where ReportingPeriodEndDate = '{RPEnddate}'""".format(outSchema=outSchema, RPEnddate=RPEnddate)
+-- MAGIC
+-- MAGIC CustomSubsInfoDF = spark.sql(CustomSubsInfoCode)
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC CustomSubsDF = CustomSubsListDF.crossJoin(CustomSubsInfoDF)
+-- MAGIC CustomSubsDF = CustomSubsDF.withColumnRenamed('OrgCodeProvider', 'Org_code')
+-- MAGIC CustomSubsDF = CustomSubsDF[['ReportingPeriodStartDate', 'ReportingPeriodEndDate', 'Org_code', 'datatable', 'UID', 'DataItem', 'Valid', 'Default', 'Invalid', 'Missing', 'Denominator']]
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC DataSubsInfoCode = """
+-- MAGIC select distinct 
+-- MAGIC ReportingPeriodStartDate, 
+-- MAGIC ReportingPeriodEndDate,
+-- MAGIC Org_code, 
+-- MAGIC 'All' as datatable, 
+-- MAGIC 'All' as UID, 
+-- MAGIC 'Organisation Submission' as DataItem,
+-- MAGIC 1 as Valid,
+-- MAGIC 0 as Default,
+-- MAGIC 0 as Invalid,
+-- MAGIC 0 as Missing, 
+-- MAGIC 1 as Denominator
+-- MAGIC from {outSchema}.dq_csv where ReportingPeriodEndDate = '{RPEnddate}'""".format(outSchema=outSchema, RPEnddate=RPEnddate)
+-- MAGIC
+-- MAGIC DataSubsInfoDF = spark.sql(DataSubsInfoCode)
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC SubsDF = CustomSubsDF.union(DataSubsInfoDF)
+-- MAGIC SubsDF = SubsDF.groupBy('ReportingPeriodStartDate', 'ReportingPeriodEndDate', 'Org_code', 'datatable', 'UID', 'DataItem', 'Default', 'Invalid', 'Denominator').agg(f.max("Valid").alias('Valid'),f.min("Missing").alias('Missing'))
+-- MAGIC SubsDF = SubsDF[['ReportingPeriodStartDate', 'ReportingPeriodEndDate', 'Org_code', 'datatable', 'UID', 'DataItem', 'Valid', 'Default', 'Invalid', 'Missing', 'Denominator']]
+-- MAGIC SubsDF.write.insertInto("{outSchema}.dq_csv".format(outSchema=outSchema))
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC dbutils.notebook.exit("Notebook: calculate_dq ran successfully")

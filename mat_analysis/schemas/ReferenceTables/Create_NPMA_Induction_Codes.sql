@@ -1,0 +1,70 @@
+-- Databricks notebook source
+-- MAGIC %python
+-- MAGIC # dbutils.widgets.text("outSchema", "mat_analysis")
+
+-- COMMAND ----------
+
+-- MAGIC %sql
+-- MAGIC CREATE TABLE IF NOT EXISTS $outSchema.nmpa_induction_codes
+-- MAGIC (
+-- MAGIC   Measure string,
+-- MAGIC   Type string,
+-- MAGIC   Code string,
+-- MAGIC   FirstMonth date,
+-- MAGIC   LastMonth date
+-- MAGIC ) USING DELTA;
+
+-- COMMAND ----------
+
+-- MAGIC %sql
+-- MAGIC TRUNCATE TABLE $outSchema.nmpa_induction_codes
+
+-- COMMAND ----------
+
+-- DBTITLE 1,VALID Induction Of Labour codes 
+-- MAGIC %sql
+-- MAGIC Insert into $outSchema.NMPA_induction_codes  
+-- MAGIC values 
+-- MAGIC ('Induction', 'SNOMED', '236958009', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '31208007', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '288191008', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '288190009', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '288189000', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '1105791000000108', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '1105781000000106', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '177135005', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '308037008', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '177136006', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '236971007', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '237002008', '2020-12-01', Null)
+-- MAGIC ,('Induction', 'SNOMED', '225245001', '2020-12-01', null)
+-- MAGIC ,('Induction', 'SNOMED', '177129005', '2020-12-01', null)
+-- MAGIC ,('Induction', 'SNOMED', '408818004', '2020-12-01', null)
+-- MAGIC ,('Induction', 'SNOMED', '236971007', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R14', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R14.1', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R141', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R14.2', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R142', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R14.8', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R148', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R14.9', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R149', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R15', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R15.1', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R151', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R15.8', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R158', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R15.9', '2020-12-01', null)
+-- MAGIC ,('Induction', 'OPCS', 'R159', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F10.', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F10y', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F10z', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F11.', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F110', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F111', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F112', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F113', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F11y', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', '7F11z', '2020-12-01', null)
+-- MAGIC ,('Induction', 'Read v2', 'L160', '2020-12-01', null)

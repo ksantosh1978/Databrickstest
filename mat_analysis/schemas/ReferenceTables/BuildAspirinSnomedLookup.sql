@@ -1,0 +1,1062 @@
+-- Databricks notebook source
+-- DBTITLE 1,Setup Widget
+-- MAGIC %python
+-- MAGIC outSchema = dbutils.widgets.get("outSchema")
+-- MAGIC print(outSchema)
+-- MAGIC assert outSchema
+
+-- COMMAND ----------
+
+DROP TABLE IF EXISTS $outSchema.aspirin_code_reference;
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Create Aspirin snomed code lookup table
+-- MAGIC %py
+-- MAGIC from delta import DeltaTable
+-- MAGIC from pyspark.sql.session import SparkSession
+-- MAGIC
+-- MAGIC def create_or_replace_aspirin_code_reference_table(schema: str,
+-- MAGIC                                                    table: str,
+-- MAGIC                                                    spark_session: SparkSession = spark) -> None:
+-- MAGIC     """Create or replace the Aspirin code reference table.
+-- MAGIC
+-- MAGIC     Parameters
+-- MAGIC     ----------
+-- MAGIC     schema : str
+-- MAGIC       Output schema.
+-- MAGIC     table : str
+-- MAGIC       Output table name.
+-- MAGIC     spark_session : SparkSession, default 'Attached notebook Apache Spark variable "spark"'
+-- MAGIC       Active SparkSession.
+-- MAGIC     """
+-- MAGIC     return (
+-- MAGIC         DeltaTable.createOrReplace(spark_session)
+-- MAGIC         .tableName(f'{schema}.{table}')
+-- MAGIC         .addColumn('Area', 'STRING', nullable=False)
+-- MAGIC         .addColumn('Code', 'STRING', nullable=False)
+-- MAGIC         .addColumn('Description', 'STRING')
+-- MAGIC         .addColumn('Code_format', 'STRING')
+-- MAGIC         .addColumn('msds_table_to_query', 'STRING', nullable=False)
+-- MAGIC         .addColumn('Typo', 'BOOLEAN', comment='Some submitters are using variations of the ICD-10 codes such as O11X or O11X- or O11.0 when referring to O11. Indicates whether the code has this variation or not. Note: A side effect of this is that some icd10 code descriptions will not be valid, which does not matter that much since we are mainly interested in the codes')
+-- MAGIC         .execute()
+-- MAGIC     )
+-- MAGIC     
+-- MAGIC create_or_replace_aspirin_code_reference_table(outSchema, 'aspirin_code_reference')
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Constraints on the reference table
+-- Set constraints to catch spelling errors, different style of capitalisations etc.
+-- Depending on the requirements, the Area and MSDS tables can be amended but this is just a consistency check.
+-- ALTER TABLE $outSchema.aspirin_code_reference ADD CONSTRAINT allowedAreas CHECK (Area IN ('Autoimmune disease',
+--                                                                                           'Chronic kidney disease',
+--                                                                                           'Diabetes (type 1 or type 2)',
+--                                                                                           'Chronic hypertension',
+--                                                                                           'History of eclampsia',
+--                                                                                           'Hypertension in previous pregnancy'));
+-- ALTER TABLE $outSchema.aspirin_code_reference ADD CONSTRAINT allowedMSDStables CHECK (msds_table_to_query IN ('MSD106',
+--                                                                                                               'MSD107',
+--                                                                                                               'MSD108'));
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Aspirin reference code lookup data
+-- MAGIC %python
+-- MAGIC import pandas as pd
+-- MAGIC from io import StringIO
+-- MAGIC
+-- MAGIC aspirin_codes_df = pd.read_csv(StringIO("""Area,Code,Description,Code_format,msds_table_to_query,Typo
+-- MAGIC Autoimmune disease,230679002,Abnormality of synaptic vesicles,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230671004,Acetylcholine resynthesis deficiency,snomed,MSD106,False
+-- MAGIC Autoimmune disease,703802001,Acquired angioedema due to C1 inhibitor autoantibody,snomed,MSD106,False
+-- MAGIC Autoimmune disease,2772003,Acquired epidermolysis bullosa,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402398001,Acute autoimmune urticaria,snomed,MSD106,False
+-- MAGIC Autoimmune disease,838359008,Acute cutaneous lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,83942000,Acute disseminated encephalomyelitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,182961000119101,Acute disseminated infectious encephalomyelitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,72986009,Acute haemorrhagic leucoencephalitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402856005,Acute haemorrhagic oedema of childhood,snomed,MSD106,False
+-- MAGIC Autoimmune disease,28505005,Acute idiopathic thrombocytopenic purpura,snomed,MSD106,False
+-- MAGIC Autoimmune disease,716723000,Acute inflammatory demyelinating polyradiculoneuropathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,715770009,Acute motor axonal neuropathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,716722005,Acute motor sensory axonal neuropathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,783244002,Acute pure sensory neuropathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,236503001,Acute scleroderma renal crisis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,766049000,Acute sensory ataxic neuropathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403486000,Acute systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,76715008,Addison's disease due to autoimmunity,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238942002,Adult linear immunoglobulin A disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,788613004,Anti-glomerular basement membrane disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,62853008,Anti-glomerular basement membrane tubulointerstitial nephritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,838366009,Anti-synthetase syndrome due to dermatomyositis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,26843008,Antiphospholipid syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,72161000119100,Antiphospholipid syndrome in pregnancy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,445187004,Antisynthetase syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402401003,Autoimmune angioedema,snomed,MSD106,False
+-- MAGIC Autoimmune disease,723004005,Autoimmune bullous dermatosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,713654004,Autoimmune cholangitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,362992004,Autoimmune connective tissue disorder,snomed,MSD106,False
+-- MAGIC Autoimmune disease,85828009,Autoimmune disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,232308006,Autoimmune disorder of inner ear,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1088321000119102,Autoimmune disorder of left inner ear,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1090931000119104,Autoimmune disorder of right inner ear,snomed,MSD106,False
+-- MAGIC Autoimmune disease,95643007,Autoimmune encephalitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,765751002,Autoimmune encephalopathy with parasomnia and obstructive sleep apnoea,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237822008,Autoimmune endocrine disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,235728001,Autoimmune enteropathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,722288007,Autoimmune enteropathy and endocrinopathy with susceptibility to chronic infection syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,838330008,Autoimmune ganglionopathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,413603009,Autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,91411007,Autoimmune haemolytic anaemia due to IgA,snomed,MSD106,False
+-- MAGIC Autoimmune disease,33491002,Autoimmune haemolytic anaemia due to IgA plus complement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,5603006,Autoimmune haemolytic anaemia due to IgG,snomed,MSD106,False
+-- MAGIC Autoimmune disease,62609001,Autoimmune haemolytic anaemia due to IgG plus complement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,71832003,Autoimmune haemolytic anaemia due to IgM,snomed,MSD106,False
+-- MAGIC Autoimmune disease,11781007,Autoimmune haemolytic anaemia due to complement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,718716008,Autoimmune haemolytic anaemia mixed type,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127061005,"Autoimmune haemolytic anaemia, categorised by antibody class AND/OR complement",snomed,MSD106,False
+-- MAGIC Autoimmune disease,408335007,Autoimmune hepatitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,721711009,Autoimmune hepatitis type 1,snomed,MSD106,False
+-- MAGIC Autoimmune disease,721712002,Autoimmune hepatitis type 2,snomed,MSD106,False
+-- MAGIC Autoimmune disease,721713007,Autoimmune hepatitis type 3,snomed,MSD106,False
+-- MAGIC Autoimmune disease,75316000,Autoimmune hypoparathyroidism,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237706000,Autoimmune hypophysitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237519003,Autoimmune hypothyroidism,snomed,MSD106,False
+-- MAGIC Autoimmune disease,443899007,Autoimmune inflammation of skeletal muscle,snomed,MSD106,False
+-- MAGIC Autoimmune disease,723022008,Autoimmune keratitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,123777002,Autoimmune leucopenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,235890007,Autoimmune liver disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,722991004,Autoimmune myopathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,715863001,Autoimmune necrotising myopathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,276575001,Autoimmune neonatal thrombocytopenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,234425008,Autoimmune neutropenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,838324008,Autoimmune optic neuropathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,448542008,Autoimmune pancreatitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,722872000,Autoimmune pancreatitis type 1,snomed,MSD106,False
+-- MAGIC Autoimmune disease,183005,Autoimmune pancytopenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,190454008,Autoimmune parathyroiditis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,449731009,Autoimmune polyendocrine syndrome type 3,snomed,MSD106,False
+-- MAGIC Autoimmune disease,449730005,Autoimmune polyendocrine syndrome type 4,snomed,MSD106,False
+-- MAGIC Autoimmune disease,41864002,Autoimmune polyendocrinopathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237790001,Autoimmune primary ovarian failure,snomed,MSD106,False
+-- MAGIC Autoimmune disease,838551007,Autoimmune progesterone dermatitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,707443007,Autoimmune pulmonary alveolar proteinosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,724809006,Autoimmune retinopathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,428470000,Autoimmune sensorineural hearing loss,snomed,MSD106,False
+-- MAGIC Autoimmune disease,95329006,Autoimmune skin disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,128091003,Autoimmune thrombocytopenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,66944004,Autoimmune thyroiditis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402397006,Autoimmune urticaria,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402402005,Autoimmune urticaria and/or angioedema,snomed,MSD106,False
+-- MAGIC Autoimmune disease,427213005,Autoimmune vasculitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,778004006,Autoinflammation-PLCG2-associated antibody deficiency-immune dysregulation,snomed,MSD106,False
+-- MAGIC Autoimmune disease,773333003,Autosomal systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,19719003,Benign lymphocytic infiltration of Jessner,snomed,MSD106,False
+-- MAGIC Autoimmune disease,34250006,Benign mucous membrane pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,267800008,Benign mucous membrane pemphigoid with no eye involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,76092003,Benign mucous membrane pemphigoid with ocular involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,15686281000119101,Bilateral rheumatoid arthritis of feet,snomed,MSD106,False
+-- MAGIC Autoimmune disease,15687321000119109,Bilateral rheumatoid arthritis of hands,snomed,MSD106,False
+-- MAGIC Autoimmune disease,15687201000119107,Bilateral rheumatoid arthritis of knees,snomed,MSD106,False
+-- MAGIC Autoimmune disease,15691241000119101,Bilateral seronegative rheumatoid arthritis of knees,snomed,MSD106,False
+-- MAGIC Autoimmune disease,15691321000119101,Bilateral seronegative rheumatoid arthritis of wrists,snomed,MSD106,False
+-- MAGIC Autoimmune disease,16050071000119108,Bilateral seropositive rheumatoid arthritis of feet,snomed,MSD106,False
+-- MAGIC Autoimmune disease,15691881000119107,Bilateral seropositive rheumatoid arthritis of knees,snomed,MSD106,False
+-- MAGIC Autoimmune disease,46459009,Brazilian pemphigus foliaceus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402442000,Brunsting-Perry type cicatricial pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,77090002,Bullous pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239889005,Bullous systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,31848007,CREST syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,62382002,CRST syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,609329007,Catastrophic antiphospholipid syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238928005,Chilblain lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402439006,Childhood bullous pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,724767000,Chorea co-occurrent and due to systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,16098491000119109,Chronic autoimmune hepatitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402399009,Chronic autoimmune urticaria,snomed,MSD106,False
+-- MAGIC Autoimmune disease,109250009,Chronic bullous dermatosis of childhood,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127055007,Chronic cold agglutinin disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127056008,Chronic cold agglutinin disease associated with B-cell neoplasm,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238927000,Chronic discoid lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,22098000,Chronic idiopathic autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,13172003,Chronic idiopathic thrombocytopenic purpura,snomed,MSD106,False
+-- MAGIC Autoimmune disease,711526005,Chronic localised pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,41030002,Coccidioidomycosis with erythema multiforme,snomed,MSD106,False
+-- MAGIC Autoimmune disease,722386009,Coeliac disease with epilepsy and cerebral calcification syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127054006,Cold agglutinin disease due to Epstein-Barr virus infection,snomed,MSD106,False
+-- MAGIC Autoimmune disease,398937006,Cold autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230673001,Congenital end-plate acetylcholine receptor deficiency,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230677000,Congenital end-plate acetylcholinesterase deficiency,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230672006,Congenital myasthenic syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,7119001,Cutaneous lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230678005,Decrease of motor end-plate potential amplitude without acetylcholine receptor deficiency,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073891000119106,Deformity of left foot co-occurrent and due to rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073871000119105,Deformity of left hand co-occurrent and due to rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073881000119108,Deformity of right foot co-occurrent and due to rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073861000119104,Deformity of right hand co-occurrent and due to rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,724782005,Demyelination of central nervous system co-occurrent and due to Sjogren disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,724781003,Demyelination of central nervous system co-occurrent and due to systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,111196000,Dermatitis herpetiformis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,721093000,Dianzani autoimmune lymphoproliferative disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,128460000,Diffuse systemic sclerosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,200938002,Discoid lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,79291003,Discoid lupus erythematosus of eyelid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403498005,Discoid lupus erythematosus of face,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403501005,Discoid lupus erythematosus of foot,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403496009,Discoid lupus erythematosus of genital mucous membranes,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403500006,Discoid lupus erythematosus of hands,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403499002,Discoid lupus erythematosus of lip,snomed,MSD106,False
+-- MAGIC Autoimmune disease,700269001,Discoid lupus erythematosus of lower eyelid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403494007,Discoid lupus erythematosus of mucous membranes,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403495008,Discoid lupus erythematosus of oral mucosa,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403497000,Discoid lupus erythematosus of scalp,snomed,MSD106,False
+-- MAGIC Autoimmune disease,700334001,Discoid lupus erythematosus of upper eyelid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403502003,Disseminated discoid lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,309742004,Drug-induced autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403629000,Drug-induced bullous pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,414061000,Drug-induced cicatricial pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403632002,Drug-induced epidermolysis bullosa acquisita,snomed,MSD106,False
+-- MAGIC Autoimmune disease,297942002,Drug-induced erythema multiforme,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127060006,"Drug-induced immune haemolytic anaemia, hapten type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,18323000,"Drug-induced immune haemolytic anaemia, immune complex type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,19307009,Drug-induced immune thrombocytopenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403633007,Drug-induced linear IgA disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,80258006,Drug-induced lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,61458006,Drug-induced lupus erythematosus due to diphenylhydantoin,snomed,MSD106,False
+-- MAGIC Autoimmune disease,54912002,Drug-induced lupus erythematosus due to hydralazine,snomed,MSD106,False
+-- MAGIC Autoimmune disease,22888007,Drug-induced lupus erythematosus due to procainamide,snomed,MSD106,False
+-- MAGIC Autoimmune disease,200907003,Drug-induced pemphigus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403631009,Drug-induced pemphigus foliaceus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403630005,Drug-induced pemphigus vulgaris,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201436003,Drug-induced systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,608874000,Eaton Lambert syndrome with underlying malignancy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,292991000119106,Eaton Lambert syndrome without underlying malignancy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,56989000,Eaton-Lambert syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,82275008,Eosinophilic granulomatosis with polyangiitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238943007,Eosinophilic spongiosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402436004,Eosinophilic spongiosis (prebullous pemphigoid),snomed,MSD106,False
+-- MAGIC Autoimmune disease,402435000,Eosinophilic spongiosis (prebullous pemphigus),snomed,MSD106,False
+-- MAGIC Autoimmune disease,402450009,"Epidermolysis bullosa acquisita, Brunsting-Perry type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,402448001,"Epidermolysis bullosa acquisita, bullous pemphigoid-like",snomed,MSD106,False
+-- MAGIC Autoimmune disease,402449009,"Epidermolysis bullosa acquisita, cicatricial pemphigoid-like",snomed,MSD106,False
+-- MAGIC Autoimmune disease,402447006,"Epidermolysis bullosa acquisita, classical acral type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,402451008,"Epidermolysis bullosa acquisita, oral mucosal involvement",snomed,MSD106,False
+-- MAGIC Autoimmune disease,402400002,Episodic autoimmune urticaria,snomed,MSD106,False
+-- MAGIC Autoimmune disease,735599007,Erosion of joint surface co-occurrent and due to rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,36715001,Erythema multiforme,snomed,MSD106,False
+-- MAGIC Autoimmune disease,707314000,Erythema multiforme co-occurrent with ulcer of oral mucous membrane,snomed,MSD106,False
+-- MAGIC Autoimmune disease,860869003,Erythema multiforme due to Herpes simplex infection,snomed,MSD106,False
+-- MAGIC Autoimmune disease,860870002,Erythema multiforme due to Mycoplasma pneumoniae infection,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403213004,Erythema multiforme due to malignancy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402971008,Erythema multiforme due to mycoplasma infection,snomed,MSD106,False
+-- MAGIC Autoimmune disease,860800001,Erythema multiforme due to systemic fungal infection,snomed,MSD106,False
+-- MAGIC Autoimmune disease,762375006,Erythema multiforme due to viral disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,123571000119104,Erythema multiforme minor,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238820002,Erythema multiforme of pregnancy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,22972008,"Erythema multiforme, dermal type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,73658009,"Erythema multiforme, epidermal type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,86563000,"Erythema multiforme, mixed dermal-epidermal type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,403491004,Erythema multiforme-like lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,75331009,Evans syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,52661003,Extra-articular rheumatoid process,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230670003,Familial infantile myasthenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,57160007,Felty's syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201791009,Flare of rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403487009,Fulminating systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230686005,Generalised myasthenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230669004,Genetically determined myasthenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,713229006,Gingival disease co-occurrent and due to erythema multiforme,snomed,MSD106,False
+-- MAGIC Autoimmune disease,713225000,Gingival disease co-occurrent and due to lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,50581000,Goodpasture's syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,353295004,Graves' disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,137421000119106,Graves' disease in remission,snomed,MSD106,False
+-- MAGIC Autoimmune disease,26151008,Graves' disease with acropachy AND with thyrotoxic crisis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,479003,Graves' disease with pretibial myxoedema AND with thyrotoxic crisis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,40956001,Guillain-Barré syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,86225009,Hapten type high affinity haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,44206008,Hapten type low affinity haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,21983002,Hashimoto thyroiditis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237500008,Hashitoxicosis - transient,snomed,MSD106,False
+-- MAGIC Autoimmune disease,73397007,Heparin-induced thrombocytopenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,111588002,Heparin-induced thrombocytopenia with thrombosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,86081009,Herpes gestationis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,28664002,Herpes iris,snomed,MSD106,False
+-- MAGIC Autoimmune disease,771145006,Herpetiform pemphigus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,91623008,Hydroa herpetiformis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,27538003,Hyperthyroidism with Hashimoto disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403492006,Hypertrophic type discoid lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237520009,Hypothyroidism due to Hashimoto's thyroiditis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237521008,Hypothyroidism due to TSH receptor blocking antibody,snomed,MSD106,False
+-- MAGIC Autoimmune disease,6398009,Idiopathic chronic cold agglutinin disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,62871001,Idiopathic paroxysmal cold haemoglobinuria,snomed,MSD106,False
+-- MAGIC Autoimmune disease,32273002,Idiopathic thrombocytopenic purpura,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402717008,IgA pemphigus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,771333006,"Immune dysregulation, inflammatory bowel disease, arthritis, recurrent infection syndrome",snomed,MSD106,False
+-- MAGIC Autoimmune disease,191306005,Immunoglobulin A vasculitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,10743271000119103,Immunoglobulin G4 related disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,408539000,Insulin autoimmune syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237652003,Insulin resistance - type B,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237824009,Juvenile Graves' disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,193207007,Juvenile or adult myasthenia gravis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,766252004,Juvenile overlap myositis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,78946008,"Keratoconjunctivitis sicca, in Sjögren's syndrome",snomed,MSD106,False
+-- MAGIC Autoimmune disease,763793004,Limbic encephalitis with contactin-associated protein-like 2 antibodies,snomed,MSD106,False
+-- MAGIC Autoimmune disease,763794005,Limbic encephalitis with leucine-rich glioma-inactivated 1 antibodies,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239886003,Limited lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,299276009,Limited systemic sclerosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,95330001,Linear IgA dermatosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402437008,Localised bullous pemphigoid of vulva,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238939008,Localised pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,196137000,Lung disease with Sjögren's disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,196138005,Lung disease with systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,196133001,Lung disease with systemic sclerosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,19267009,Lupus anticoagulant disorder,snomed,MSD106,False
+-- MAGIC Autoimmune disease,77753005,Lupus disease of the lung,snomed,MSD106,False
+-- MAGIC Autoimmune disease,200936003,Lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238926009,Lupus erythematosus and erythema multiforme-like syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,200937007,Lupus erythematosus chronicus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,200939005,Lupus erythematosus migrans,snomed,MSD106,False
+-- MAGIC Autoimmune disease,200940007,Lupus erythematosus nodularis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,707301001,Lupus erythematosus of oral mucous membrane,snomed,MSD106,False
+-- MAGIC Autoimmune disease,200941006,Lupus erythematosus tumidus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,200942004,Lupus erythematosus unguium mutilans,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403513000,Lupus erythematosus-associated nail dystrophy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,19682006,Lupus hepatitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239888002,Lupus panniculitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,15084002,Lupus profundus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,126766000,Lymphoepithelial sialadenitis of Sjögren's syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,718175009,Macrophagic myofasciitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,234381003,Maternal autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,398049005,Mixed connective tissue disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238850005,Mouth and genital ulcers with inflamed cartilage syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,866046008,Mucous membrane pemphigoid of penile mucosa,snomed,MSD106,False
+-- MAGIC Autoimmune disease,707986004,Mucous membrane pemphigoid with oesophageal involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,91637004,Myasthenia gravis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230685009,Myasthenia gravis associated with thymoma,snomed,MSD106,False
+-- MAGIC Autoimmune disease,77461000119109,Myasthenia gravis with exacerbation,snomed,MSD106,False
+-- MAGIC Autoimmune disease,77471000119103,Myasthenia gravis without exacerbation,snomed,MSD106,False
+-- MAGIC Autoimmune disease,31839002,"Myasthenia gravis, adult form",snomed,MSD106,False
+-- MAGIC Autoimmune disease,55051001,"Myasthenia gravis, juvenile form",snomed,MSD106,False
+-- MAGIC Autoimmune disease,80976008,Myasthenic crisis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,59957008,Neonatal Graves' disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,774084003,Neonatal antiphospholipid syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,774083009,Neonatal autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,774082004,Neonatal dermatomyositis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,95609003,Neonatal lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,82178003,Neonatal myasthenia gravis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,774080007,Neonatal scleroderma,snomed,MSD106,False
+-- MAGIC Autoimmune disease,295101000119105,Nephropathy co-occurrent and due to systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238818000,Non-bullous erythema multiforme,snomed,MSD106,False
+-- MAGIC Autoimmune disease,54072008,Nonbacterial verrucal endocardiosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402712002,Occupational scleroderma,snomed,MSD106,False
+-- MAGIC Autoimmune disease,314757003,Ocular cicatricial pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230684008,Ocular myasthenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,414927004,Ocular myasthenia with strabismus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402441007,Oral involvement by mucous membrane pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402444004,Oral mucosal involvement by dermatitis herpetiformis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402446002,Oral mucosal involvement by linear IgA disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402440008,Oral mucous membrane involvement by bullous pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,718471008,Oral pemphigoid of gingival mucous membrane,snomed,MSD106,False
+-- MAGIC Autoimmune disease,361212009,Oral pemphigus vulgaris,snomed,MSD106,False
+-- MAGIC Autoimmune disease,446682003,Paediatric autoimmune neuropsychiatric disorder associated with streptococcal infection,snomed,MSD106,False
+-- MAGIC Autoimmune disease,762303003,Paediatric onset Sjögren syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,724603009,Paediatric onset systemic sclerosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403211002,Papular form erythema multiforme,snomed,MSD106,False
+-- MAGIC Autoimmune disease,766722008,Paraparetic variant of Guillain-Barré syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127057004,Paroxysmal cold haemoglobinuria,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127058009,Paroxysmal cold haemoglobinuria associated with tertiary syphilis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,86142006,Pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402438003,Pemphigoid nodularis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238940005,Pemphigoid vegetans,snomed,MSD106,False
+-- MAGIC Autoimmune disease,65172003,Pemphigus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,36739006,Pemphigus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,35154004,Pemphigus foliaceus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,277475006,Pemphigus neonatorum,snomed,MSD106,False
+-- MAGIC Autoimmune disease,721196005,Pemphigus of vulva,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402718003,Pemphigus paraneoplastica,snomed,MSD106,False
+-- MAGIC Autoimmune disease,81285006,Pemphigus vegetans,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238937005,Pemphigus vegetans of Neumann type,snomed,MSD106,False
+-- MAGIC Autoimmune disease,49420001,Pemphigus vulgaris,snomed,MSD106,False
+-- MAGIC Autoimmune disease,715840006,Pemphigus vulgaris of gingival mucous membrane,snomed,MSD106,False
+-- MAGIC Autoimmune disease,7607008,Pericarditis secondary to rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,87442008,Pericarditis secondary to scleroderma,snomed,MSD106,False
+-- MAGIC Autoimmune disease,25380002,Pericarditis secondary to systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,193206003,Persistent neonatal myasthenia gravis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,783010003,Pharyngeal-cervical-brachial variant of Guillain-Barré syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,737249005,Photodermatitis co-occurrent and due to autoimmune disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,11244009,"Polyglandular autoimmune syndrome, type 1",snomed,MSD106,False
+-- MAGIC Autoimmune disease,83728000,"Polyglandular autoimmune syndrome, type 2",snomed,MSD106,False
+-- MAGIC Autoimmune disease,127053000,Post-infectious cold agglutinin disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,35703006,Post-viral paroxysmal cold haemoglobinuria,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239946005,Postinfective immunoglobulin A vasculitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238938000,Prebullous pemphigoid,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127049002,Primary (idiopathic) autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239912009,Primary Sjögren's syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239892009,Primary antiphospholipid syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239894005,Primary antiphospholipid syndrome with multisystem involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,31712002,Primary biliary cholangitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,191210005,Primary cold-type haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,191211009,Primary warm-type haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,444133002,Progressive systemic sclerosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230674007,Pseudomyopathic myasthenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238608008,Psoriasis of scalp,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402319008,Psoriasis of scalp margin,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230676009,Putative defect in acetylcholine synthesis or packaging,snomed,MSD106,False
+-- MAGIC Autoimmune disease,724015007,"Pyogenic arthritis, pyoderma gangrenosum, acne syndrome",snomed,MSD106,False
+-- MAGIC Autoimmune disease,723508002,RAS-associated autoimmune leucoproliferative disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,95332009,Rash of systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,72275000,Relapsing polychondritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,232439007,Relapsing polychondritis of larynx,snomed,MSD106,False
+-- MAGIC Autoimmune disease,236502006,Renal involvement in scleroderma,snomed,MSD106,False
+-- MAGIC Autoimmune disease,783787000,Retinal vasculopathy with cerebral leukoencephalopathy and systemic manifestations,snomed,MSD106,False
+-- MAGIC Autoimmune disease,702575003,Retinocochleocerebral vasculopathy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,715401008,Reynolds syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,399923009,Rheumatoid arteritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,69896004,Rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,287008006,Rheumatoid arthritis - ankle and/or foot,snomed,MSD106,False
+-- MAGIC Autoimmune disease,287007001,Rheumatoid arthritis - hand joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,143441000119108,Rheumatoid arthritis in remission,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201768005,Rheumatoid arthritis of acromioclavicular joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201779000,Rheumatoid arthritis of ankle,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201764007,Rheumatoid arthritis of cervical spine,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201774005,Rheumatoid arthritis of distal interphalangeal joint of finger,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201770001,Rheumatoid arthritis of distal radioulnar joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201769002,Rheumatoid arthritis of elbow,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201783000,Rheumatoid arthritis of first metatarsophalangeal joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,429192004,Rheumatoid arthritis of foot,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201775006,Rheumatoid arthritis of hip,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201785007,Rheumatoid arthritis of interphalangeal joint of toe,snomed,MSD106,False
+-- MAGIC Autoimmune disease,781206002,Rheumatoid arthritis of joint of spine,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201777003,Rheumatoid arthritis of knee,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073701000119107,Rheumatoid arthritis of left foot,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073711000119105,Rheumatoid arthritis of left hand,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073721000119103,Rheumatoid arthritis of left hip,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073731000119100,Rheumatoid arthritis of left knee,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073741000119109,Rheumatoid arthritis of left shoulder,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073751000119106,Rheumatoid arthritis of left wrist,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201784006,Rheumatoid arthritis of lesser metatarsophalangeal joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201772009,Rheumatoid arthritis of metacarpophalangeal joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,287006005,Rheumatoid arthritis of multiple joints,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201773004,Rheumatoid arthritis of proximal interphalangeal joint of finger,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073781000119104,Rheumatoid arthritis of right foot,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073791000119101,Rheumatoid arthritis of right hand,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073801000119100,Rheumatoid arthritis of right hip,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073811000119102,Rheumatoid arthritis of right knee,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073821000119109,Rheumatoid arthritis of right shoulder,snomed,MSD106,False
+-- MAGIC Autoimmune disease,1073831000119107,Rheumatoid arthritis of right wrist,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201776007,Rheumatoid arthritis of sacroiliac joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201766009,Rheumatoid arthritis of shoulder,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201767000,Rheumatoid arthritis of sternoclavicular joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201780002,Rheumatoid arthritis of subtalar joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201781003,Rheumatoid arthritis of talonavicular joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,427770001,Rheumatoid arthritis of temporomandibular joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201778008,Rheumatoid arthritis of tibiofibular joint,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201771002,Rheumatoid arthritis of wrist,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239795001,Rheumatoid arthritis with multisystem involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,735600005,Rheumatoid arthritis without erosion,snomed,MSD106,False
+-- MAGIC Autoimmune disease,28880005,Rheumatoid carditis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,319841000119107,Rheumatoid lung disease with rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,398640008,Rheumatoid pneumoconiosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,770596007,Rippling muscle disease with myasthenia gravis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403493001,Rosaceous type discoid lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,68815009,SLE glomerulonephritis syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,73286009,"SLE glomerulonephritis syndrome, WHO class I",snomed,MSD106,False
+-- MAGIC Autoimmune disease,4676006,"SLE glomerulonephritis syndrome, WHO class II",snomed,MSD106,False
+-- MAGIC Autoimmune disease,76521009,"SLE glomerulonephritis syndrome, WHO class III",snomed,MSD106,False
+-- MAGIC Autoimmune disease,36402006,"SLE glomerulonephritis syndrome, WHO class IV",snomed,MSD106,False
+-- MAGIC Autoimmune disease,52042003,"SLE glomerulonephritis syndrome, WHO class V",snomed,MSD106,False
+-- MAGIC Autoimmune disease,11013005,"SLE glomerulonephritis syndrome, WHO class VI",snomed,MSD106,False
+-- MAGIC Autoimmune disease,711164003,STING-associated vasculopathy with onset in infancy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,763630007,Satoyoshi syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,89681000119101,Scleroderma co-occurrent and due to glomerulonephritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,238930007,Sclerodermiform reaction,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239915006,Secondary Sjögren's syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239895006,Secondary antiphospholipid syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239897003,Secondary antiphospholipid syndrome with multisystem involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127050002,Secondary autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,732962005,Secondary autoimmune haemolytic anaemia co-occurrent and due to chronic inflammatory disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,732963000,Secondary autoimmune haemolytic anaemia co-occurrent and due to lymphoproliferative disorder,snomed,MSD106,False
+-- MAGIC Autoimmune disease,732965007,Secondary autoimmune haemolytic anaemia co-occurrent and due to rheumatic disorder,snomed,MSD106,False
+-- MAGIC Autoimmune disease,732960002,Secondary autoimmune haemolytic anaemia co-occurrent and due to systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,732966008,Secondary autoimmune haemolytic anaemia co-occurrent and due to ulcerative colitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,128092005,Secondary autoimmune thrombocytopenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,191212002,Secondary cold-type haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,50253007,Secondary paroxysmal cold haemoglobinuria,snomed,MSD106,False
+-- MAGIC Autoimmune disease,127052005,Secondary warm autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,191213007,Secondary warm-type haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239792003,Seronegative rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,319081000119109,Seronegative rheumatoid arthritis of multiple sites,snomed,MSD106,False
+-- MAGIC Autoimmune disease,308143008,Seropositive errosive rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239791005,Seropositive rheumatoid arthritis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,16606721000119107,Seropositive rheumatoid arthritis in remission,snomed,MSD106,False
+-- MAGIC Autoimmune disease,318861000119101,Seropositive rheumatoid arthritis of left hand,snomed,MSD106,False
+-- MAGIC Autoimmune disease,11055151000119108,Seropositive rheumatoid arthritis of multiple joints,snomed,MSD106,False
+-- MAGIC Autoimmune disease,318931000119100,Seropositive rheumatoid arthritis of right hand,snomed,MSD106,False
+-- MAGIC Autoimmune disease,83901003,Sjögren's syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,771271000,Steroid-responsive encephalopathy associated with autoimmune thyroiditis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,361125005,Subacute autoimmune thyroiditis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239891002,Subacute cutaneous lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403489007,"Subacute cutaneous lupus erythematosus, annular/polycyclic type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,403490003,"Subacute cutaneous lupus erythematosus, papulosquamous type",snomed,MSD106,False
+-- MAGIC Autoimmune disease,778023004,Syndromic multisystem autoimmune disease due to ITCH deficiency,snomed,MSD106,False
+-- MAGIC Autoimmune disease,55464009,Systemic lupus erythematosus,snomed,MSD106,False
+-- MAGIC Autoimmune disease,295121000119101,Systemic lupus erythematosus co-occurrent and due to nephrosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,295111000119108,Systemic lupus erythematosus co-occurrent and due to nephrotic syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,95644001,Systemic lupus erythematosus encephalitis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,698694005,Systemic lupus erythematosus in remission,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403488004,Systemic lupus erythematosus of childhood,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239890001,Systemic lupus erythematosus with multisystem involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,239887007,Systemic lupus erythematosus with organ/system involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,309762007,Systemic lupus erythematosus with pericarditis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,402865003,Systemic lupus erythematosus-associated antiphospholipid syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,397856003,Systemic lupus erythematosus-related syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,89155008,Systemic sclerosis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,443872005,Systemic sclerosis due to chemical,snomed,MSD106,False
+-- MAGIC Autoimmune disease,201443009,Systemic sclerosis induced by drugs and chemicals,snomed,MSD106,False
+-- MAGIC Autoimmune disease,128461001,Systemic sclerosis sine scleroderma,snomed,MSD106,False
+-- MAGIC Autoimmune disease,298285004,Systemic sclerosis with limited cutaneous involvement,snomed,MSD106,False
+-- MAGIC Autoimmune disease,276177000,Thyroid eye disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,237499004,Thyrotoxicosis due to Graves' disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,15470004,Toxic diffuse goitre with acropachy,snomed,MSD106,False
+-- MAGIC Autoimmune disease,55807009,Toxic diffuse goitre with exophthalmos,snomed,MSD106,False
+-- MAGIC Autoimmune disease,66628005,Toxic diffuse goitre with exophthalmos AND with thyrotoxic storm,snomed,MSD106,False
+-- MAGIC Autoimmune disease,60268006,Toxic diffuse goitre with pretibial myxoedema,snomed,MSD106,False
+-- MAGIC Autoimmune disease,60216004,Toxic diffuse goitre with thyrotoxic crisis,snomed,MSD106,False
+-- MAGIC Autoimmune disease,230683002,Transient neonatal myasthenia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,86219005,Uveitis-rheumatoid arthritis syndrome,snomed,MSD106,False
+-- MAGIC Autoimmune disease,403212009,Vesicobullous form erythema multiforme,snomed,MSD106,False
+-- MAGIC Autoimmune disease,193497004,Vogt-Koyanagi-Harada disease,snomed,MSD106,False
+-- MAGIC Autoimmune disease,3978000,Warm autoimmune haemolytic anaemia,snomed,MSD106,False
+-- MAGIC Autoimmune disease,724276006,"X-linked immune dysregulation, polyendocrinopathy, enteropathy syndrome",snomed,MSD106,False
+-- MAGIC Chronic hypertension,1201005,Benign essential hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,71874008,Benign essential hypertension complicating AND/OR reason for care during childbirth,snomed,MSD106,False
+-- MAGIC Chronic hypertension,23717007,Benign essential hypertension complicating AND/OR reason for care during pregnancy,snomed,MSD106,False
+-- MAGIC Chronic hypertension,35303009,Benign essential hypertension complicating AND/OR reason for care during puerperium,snomed,MSD106,False
+-- MAGIC Chronic hypertension,63287004,Benign essential hypertension in obstetric context,snomed,MSD106,False
+-- MAGIC Chronic hypertension,10725009,Benign hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,G932,Benign intracranial hypertension,icd10,MSD106,True
+-- MAGIC Chronic hypertension,G93.2,Benign intracranial hypertension,icd10,MSD106,False
+-- MAGIC Chronic hypertension,G932-D,Benign intracranial hypertension,icd10,MSD106,True
+-- MAGIC Chronic hypertension,G932-,Benign intracranial hypertension,icd10,MSD106,True
+-- MAGIC Chronic hypertension,194785008,Benign secondary hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,73410007,Benign secondary renovascular hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,8218002,Chronic Hypertension complicating AND/OR reason for care during childbirth,snomed,MSD106,False
+-- MAGIC Chronic hypertension,37618003,Chronic hypertension complicating AND/OR reason for care during pregnancy,snomed,MSD106,False
+-- MAGIC Chronic hypertension,24042004,Chronic hypertension complicating AND/OR reason for care during puerperium,snomed,MSD106,False
+-- MAGIC Chronic hypertension,8762007,Chronic Hypertension in Obstretric Context,snomed,MSD106,False
+-- MAGIC Chronic hypertension,I10X-,Essential (primary) hypertension,icd10,MSD106,True
+-- MAGIC Chronic hypertension,I10X,Essential (primary) hypertension,icd10,MSD106,True
+-- MAGIC Chronic hypertension,I10.0,Essential (primary) hypertension,icd10,MSD106,True
+-- MAGIC Chronic hypertension,I10,Essential (primary) hypertension,icd10,MSD106,False
+-- MAGIC Chronic hypertension,59621000,Essential hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,18416000,Essential hypertension complicating AND/OR reason for care during childbirth,snomed,MSD106,False
+-- MAGIC Chronic hypertension,78808002,Essential hypertension complicating AND/OR reason for care during pregnancy,snomed,MSD106,False
+-- MAGIC Chronic hypertension,9901000,Essential hypertension complicating AND/OR reason for care during puerperium,snomed,MSD106,False
+-- MAGIC Chronic hypertension,72022006,Essential hypertension in obstetric context,snomed,MSD106,False
+-- MAGIC Chronic hypertension,123800009,Goldblatt hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,19769006,High-renin essential hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,427889009,Hypertension associated with transplantation,snomed,MSD106,False
+-- MAGIC Chronic hypertension,871642009,Hypertension due to aortic arch obstruction,snomed,MSD106,False
+-- MAGIC Chronic hypertension,766937004,Hypertension due to gain-of-function mutation in mineralocorticoid receptor,snomed,MSD106,False
+-- MAGIC Chronic hypertension,71701000119105,Hypertension in chronic kidney disease due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic hypertension,71421000119105,Hypertension in chronic kidney disease due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic hypertension,140131000119102,Hypertension in chronic kidney disease stage 2 due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic hypertension,140121000119100,Hypertension in chronic kidney disease stage 3 due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic hypertension,140111000119107,Hypertension in chronic kidney disease stage 4 due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic hypertension,140101000119109,Hypertension in chronic kidney disease stage 5 due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic hypertension,169465000,Hypertension induced by oral contraceptive pill,snomed,MSD106,False
+-- MAGIC Chronic hypertension,845891000000103,Hypertension resistant to drug therapy,snomed,MSD106,False
+-- MAGIC Chronic hypertension,194791005,Hypertension secondary to drug,snomed,MSD106,False
+-- MAGIC Chronic hypertension,194788005,Hypertension secondary to endocrine disorder,snomed,MSD106,False
+-- MAGIC Chronic hypertension,428575007,Hypertension secondary to kidney transplant,snomed,MSD106,False
+-- MAGIC Chronic hypertension,26078007,Hypertension secondary to renal disease complicating AND/OR reason for care during childbirth,snomed,MSD106,False
+-- MAGIC Chronic hypertension,48552006,Hypertension secondary to renal disease complicating AND/OR reason for care during pregnancy,snomed,MSD106,False
+-- MAGIC Chronic hypertension,39727004,Hypertension secondary to renal disease complicating AND/OR reason for care during puerperium,snomed,MSD106,False
+-- MAGIC Chronic hypertension,111438007,Hypertension secondary to renal disease in obstetric context,snomed,MSD106,False
+-- MAGIC Chronic hypertension,397748008,Hypertension with albuminuria,snomed,MSD106,False
+-- MAGIC Chronic hypertension,38341003,"Hypertensive disorder, systemic arterial (disorder)",snomed,MSD106,False
+-- MAGIC Chronic hypertension,371125006,Labile essential hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,46481004,Low-renin essential hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,78975002,Malignant essential hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,89242004,Malignant secondary hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,194783001,Malignant secondary renovascular hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,57684003,Parenchymal renal hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,40511000119107,Postpartum pre-existing essential hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,O100-,"Pre-existing essential hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10.0,"Pre-existing essential hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,False
+-- MAGIC Chronic hypertension,O100,"Pre-existing essential hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O100-D,"Pre-existing essential hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10X-,"Pre-existing hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10,"Pre-existing hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,False
+-- MAGIC Chronic hypertension,O10.0,"Pre-existing hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10X,"Pre-existing hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,86041002,"Pre-Existing Hypertension in obstetric context",snomed,MSD106,False
+-- MAGIC Chronic hypertension,118781000119108,Pre-existing hypertensive chronic kidney disease in mother complicating pregnancy,snomed,MSD106,False
+-- MAGIC Chronic hypertension,O103-,"Pre-existing hypertensive heart and renal disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O103-D,"Pre-existing hypertensive heart and renal disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O103,"Pre-existing hypertensive heart and renal disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10.3,"Pre-existing hypertensive heart and renal disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,False
+-- MAGIC Chronic hypertension,O101,"Pre-existing hypertensive heart disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O101-D,"Pre-existing hypertensive heart disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10.1,"Pre-existing hypertensive heart disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,False
+-- MAGIC Chronic hypertension,O101-,"Pre-existing hypertensive heart disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O102-,"Pre-existing hypertensive renal disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O102-D,"Pre-existing hypertensive renal disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10.2,"Pre-existing hypertensive renal disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,False
+-- MAGIC Chronic hypertension,O102,"Pre-existing hypertensive renal disease complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,199008003,"Pre-existing secondary hypertension complicating pregnancy, childbirth and puerperium",snomed,MSD106,False
+-- MAGIC Chronic hypertension,O104-D,"Pre-existing secondary hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O104,"Pre-existing secondary hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O104-,"Pre-existing secondary hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10.4,"Pre-existing secondary hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,False
+-- MAGIC Chronic hypertension,39018007,Renal arterial hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,28119000,Renal hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,14973001,Renal sclerosis with hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,123799005,Renovascular hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,74451002,Secondary diastolic hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,31992008,Secondary hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,843841000000109,Severe hypertension (NICE - National Institute for Health and Clinical Excellence 2011),snomed,MSD106,False
+-- MAGIC Chronic hypertension,843821000000102,Stage 1 hypertension (NICE - National Institute for Health and Clinical Excellence 2011),snomed,MSD106,False
+-- MAGIC Chronic hypertension,908651000000101,Stage 1 hypertension (NICE 2011) with evidence of end organ damage,snomed,MSD106,False
+-- MAGIC Chronic hypertension,908631000000108,Stage 1 hypertension (NICE 2011) without evidence of end organ damage,snomed,MSD106,False
+-- MAGIC Chronic hypertension,846371000000103,Stage 2 hypertension (NICE - National Institute for Health and Clinical Excellence 2011),snomed,MSD106,False
+-- MAGIC Chronic hypertension,429457004,Systolic essential hypertension,snomed,MSD106,False
+-- MAGIC Chronic hypertension,O109,"Unspecified pre-existing hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O10.9,"Unspecified pre-existing hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,False
+-- MAGIC Chronic hypertension,O109-D,"Unspecified pre-existing hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic hypertension,O109-,"Unspecified pre-existing hypertension complicating pregnancy, childbirth and the puerperium",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,236433006,Acute-on-chronic renal failure,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,691421000119108,Anaemia co-occurrent and due to chronic kidney disease stage 3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,707324008,Anaemia in end stage renal disease,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,49708008,Anaemia of chronic renal failure,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,1801000119106,"Anemia, pre-end stage renal disease on erythropoietin protocol",snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949401000000103,CKD G1A1 - chronic kidney disease with glomerular filtration rate category G1 and albuminuria category A1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949421000000107,CKD G1A2 - chronic kidney disease with glomerular filtration rate category G1 and albuminuria category A2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949481000000108,CKD G1A3 - chronic kidney disease with glomerular filtration rate category G1 and albuminuria category A3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949521000000108,CKD G2A1 - chronic kidney disease with glomerular filtration rate category G2 and albuminuria category A1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949561000000100,CKD G2A2 - chronic kidney disease with glomerular filtration rate category G2 and albuminuria category A2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949621000000109,CKD G2A3 - chronic kidney disease with glomerular filtration rate category G2 and albuminuria category A3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949881000000106,CKD G3aA1 - chronic kidney disease with glomerular filtration rate category G3a and albuminuria category A1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949901000000109,CKD G3aA2 - chronic kidney disease with glomerular filtration rate category G3a and albuminuria category A2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,949921000000100,CKD G3aA3 - chronic kidney disease with glomerular filtration rate category G3a and albuminuria category A3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950061000000103,CKD G3bA1 - chronic kidney disease with glomerular filtration rate category G3b and albuminuria category A1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950081000000107,CKD G3bA2 - chronic kidney disease with glomerular filtration rate category G3b and albuminuria category A2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950101000000101,CKD G3bA3 - chronic kidney disease with glomerular filtration rate category G3b and albuminuria category A3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950181000000106,CKD G4A1 - chronic kidney disease with glomerular filtration rate category G4 and albuminuria category A1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950211000000107,CKD G4A2 - chronic kidney disease with glomerular filtration rate category G4 and albuminuria category A2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950231000000104,CKD G4A3 - chronic kidney disease with glomerular filtration rate category G4 and albuminuria category A3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950251000000106,CKD G5A1 - chronic kidney disease with glomerular filtration rate category G5 and albuminuria category A1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950291000000103,CKD G5A2 - chronic kidney disease with glomerular filtration rate category G5 and albuminuria category A2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,950311000000102,CKD G5A3 - chronic kidney disease with glomerular filtration rate category G5 and albuminuria category A3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,709044004,Chronic kidney disease,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,N18X-,Chronic kidney disease,icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N18,Chronic kidney disease,icd10,MSD106,False
+-- MAGIC Chronic kidney disease,N18X,Chronic kidney disease,icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N18.0,Chronic kidney disease,icd10,MSD106,True
+-- MAGIC Chronic kidney disease,284961000119106,Chronic kidney disease due to benign hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,104931000119100,Chronic kidney disease due to hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,722150000,Chronic kidney disease due to systemic infection,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,722467000,Chronic kidney disease due to traumatic loss of kidney,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,96441000119101,Chronic kidney disease due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,722098007,Chronic kidney disease following donor nephrectomy,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,722149000,Chronic kidney disease following excision of renal neoplasm,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,713313000,Chronic kidney disease mineral and bone disorder,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,431855005,Chronic kidney disease stage 1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,751000119104,Chronic kidney disease stage 1 associated with type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,284971000119100,Chronic kidney disease stage 1 due to benign hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,368421000119108,Chronic kidney disease stage 1 due to drug induced diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,117681000119102,Chronic kidney disease stage 1 due to hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,90721000119101,Chronic kidney disease stage 1 due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324121000000109,Chronic kidney disease stage 1 with proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324151000000104,Chronic kidney disease stage 1 without proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,431856006,Chronic kidney disease stage 2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,741000119101,Chronic kidney disease stage 2 associated with type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,284981000119102,Chronic kidney disease stage 2 due to benign hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,368431000119106,Chronic kidney disease stage 2 due to drug induced diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,129181000119109,Chronic kidney disease stage 2 due to hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,90731000119103,Chronic kidney disease stage 2 due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324181000000105,Chronic kidney disease stage 2 with proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324211000000106,Chronic kidney disease stage 2 without proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,433144002,Chronic kidney disease stage 3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,731000119105,Chronic kidney disease stage 3 associated with type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,284991000119104,Chronic kidney disease stage 3 due to benign hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,368441000119102,Chronic kidney disease stage 3 due to drug induced diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,129171000119106,Chronic kidney disease stage 3 due to hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,90741000119107,Chronic kidney disease stage 3 due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324251000000105,Chronic kidney disease stage 3 with proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324281000000104,Chronic kidney disease stage 3 without proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,700378005,Chronic kidney disease stage 3A,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324311000000101,Chronic kidney disease stage 3A with proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324341000000100,Chronic kidney disease stage 3A without proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,700379002,Chronic kidney disease stage 3B,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324371000000106,Chronic kidney disease stage 3B with proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324411000000105,Chronic kidney disease stage 3B without proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,431857002,Chronic kidney disease stage 4,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,721000119107,Chronic kidney disease stage 4 associated with type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,285001000119105,Chronic kidney disease stage 4 due to benign hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,368451000119100,Chronic kidney disease stage 4 due to drug induced diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,129151000119102,Chronic kidney disease stage 4 due to hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,90751000119109,Chronic kidney disease stage 4 due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324441000000106,Chronic kidney disease stage 4 with proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324471000000100,Chronic kidney disease stage 4 without proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,433146000,Chronic kidney disease stage 5,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,711000119100,Chronic kidney disease stage 5 associated with type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,285011000119108,Chronic kidney disease stage 5 due to benign hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,368461000119103,Chronic kidney disease stage 5 due to drug induced diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,129161000119100,Chronic kidney disease stage 5 due to hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,90761000119106,Chronic kidney disease stage 5 due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,714152005,Chronic kidney disease stage 5 on dialysis,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324501000000107,Chronic kidney disease stage 5 with proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,714153000,Chronic kidney disease stage 5 with transplant,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,324541000000105,Chronic kidney disease stage 5 without proteinuria,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,897308007,Chronic kidney disease with osteoporosis,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,N181,"Chronic kidney disease, stage 1",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N18.1,"Chronic kidney disease, stage 1",icd10,MSD106,False
+-- MAGIC Chronic kidney disease,N181-D,"Chronic kidney disease, stage 1",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N181-,"Chronic kidney disease, stage 1",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N182,"Chronic kidney disease, stage 2",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N182-D,"Chronic kidney disease, stage 2",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N182-,"Chronic kidney disease, stage 2",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N18.2,"Chronic kidney disease, stage 2",icd10,MSD106,False
+-- MAGIC Chronic kidney disease,N183-,"Chronic kidney disease, stage 3",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N183,"Chronic kidney disease, stage 3",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N183-D,"Chronic kidney disease, stage 3",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N18.3,"Chronic kidney disease, stage 3",icd10,MSD106,False
+-- MAGIC Chronic kidney disease,N184-,"Chronic kidney disease, stage 4",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N184-D,"Chronic kidney disease, stage 4",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N184,"Chronic kidney disease, stage 4",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N18.4,"Chronic kidney disease, stage 4",icd10,MSD106,False
+-- MAGIC Chronic kidney disease,N185,"Chronic kidney disease, stage 5",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N18.5,"Chronic kidney disease, stage 5",icd10,MSD106,False
+-- MAGIC Chronic kidney disease,N185-D,"Chronic kidney disease, stage 5",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N185-,"Chronic kidney disease, stage 5",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N18.9,"Chronic kidney disease, unspecified",icd10,MSD106,False
+-- MAGIC Chronic kidney disease,N189-D,"Chronic kidney disease, unspecified",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N189,"Chronic kidney disease, unspecified",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,N189-,"Chronic kidney disease, unspecified",icd10,MSD106,True
+-- MAGIC Chronic kidney disease,57557005,Chronic milk alkali syndrome,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,425369003,Chronic progressive renal failure,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,90688005,Chronic renal failure,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,771000119108,Chronic renal impairment associated with type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,723190009,Chronic renal insufficiency,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,46177005,End stage renal disease,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,712487000,End stage renal disease due to benign hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,111411000119103,End stage renal disease due to hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,368471000119109,End stage renal disease on dialysis due to drug induced diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,153891000119101,End stage renal disease on dialysis due to hypertension,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,90771000119100,End stage renal disease on dialysis due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,90791000119104,End stage renal disease on dialysis due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,236435004,End stage renal failure on dialysis,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,236434000,End stage renal failure untreated by renal replacement therapy,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,236436003,End stage renal failure with renal transplant,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,704667004,Hypertension concurrent and due to end stage renal disease on dialysis,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,128001000119105,Hypertension concurrent and due to end stage renal disease on dialysis due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,127991000119101,Hypertension concurrent and due to end stage renal disease on dialysis due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,71701000119105,Hypertension in chronic kidney disease due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,71421000119105,Hypertension in chronic kidney disease due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,140131000119102,Hypertension in chronic kidney disease stage 2 due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,140121000119100,Hypertension in chronic kidney disease stage 3 due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,140111000119107,Hypertension in chronic kidney disease stage 4 due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,140101000119109,Hypertension in chronic kidney disease stage 5 due to type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,96701000119107,Hypertensive heart AND chronic kidney disease on dialysis,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,96751000119106,Hypertensive heart AND chronic kidney disease stage 1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,96741000119109,Hypertensive heart AND chronic kidney disease stage 2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,96731000119100,Hypertensive heart AND chronic kidney disease stage 3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,96721000119103,Hypertensive heart AND chronic kidney disease stage 4,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,96711000119105,Hypertensive heart AND chronic kidney disease stage 5,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,8501000119104,Hypertensive heart and chronic kidney disease,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,776416004,"Hyperuricaemia, pulmonary hypertension, renal failure, alkalosis syndrome",snomed,MSD106,False
+-- MAGIC Chronic kidney disease,285831000119108,Malignant hypertensive chronic kidney disease,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,285851000119102,Malignant hypertensive chronic kidney disease stage 1,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,285861000119100,Malignant hypertensive chronic kidney disease stage 2,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,285871000119106,Malignant hypertensive chronic kidney disease stage 3,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,285881000119109,Malignant hypertensive chronic kidney disease stage 4,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,153851000119106,Malignant hypertensive chronic kidney disease stage 5,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,285841000119104,Malignant hypertensive end stage renal disease,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,286371000119107,Malignant hypertensive end stage renal disease on dialysis,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,708975004,Mixed renal osteodystrophy,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,118781000119108,Pre-existing hypertensive chronic kidney disease in mother complicating pregnancy,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,10757401000119104,Pre-existing hypertensive heart and chronic kidney disease in mother complicating childbirth,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,10757481000119107,Pre-existing hypertensive heart and chronic kidney disease in mother complicating pregnancy,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,199007008,"Pre-existing hypertensive heart and renal disease complicating pregnancy, childbirth and the puerperium",snomed,MSD106,False
+-- MAGIC Chronic kidney disease,16726004,Renal osteodystrophy,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,897310009,Renal osteodystrophy with high bone turnover,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,897312001,Renal osteodystrophy with low bone turnover,snomed,MSD106,False
+-- MAGIC Chronic kidney disease,897311008,Renal osteodystrophy with normal bone turnover,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),530558861000132104,Atypical diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),O244-D,Diabetes mellitus arising in pregnancy,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O244-,Diabetes mellitus arising in pregnancy,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24.4,Diabetes mellitus arising in pregnancy,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),O244,Diabetes mellitus arising in pregnancy,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24,Diabetes mellitus in pregnancy,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),O24.0,Diabetes mellitus in pregnancy,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24X,Diabetes mellitus in pregnancy,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24X-,Diabetes mellitus in pregnancy,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O249,"Diabetes mellitus in pregnancy, unspecified",icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O249-D,"Diabetes mellitus in pregnancy, unspecified",icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O249-,"Diabetes mellitus in pregnancy, unspecified",icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24.9,"Diabetes mellitus in pregnancy, unspecified",icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),O243-,"Diabetes mellitus in pregnancy: Pre-existing diabetes mellitus, unspecified",icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24.3,"Diabetes mellitus in pregnancy: Pre-existing diabetes mellitus, unspecified",icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),O243-D,"Diabetes mellitus in pregnancy: Pre-existing diabetes mellitus, unspecified",icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O243,"Diabetes mellitus in pregnancy: Pre-existing diabetes mellitus, unspecified",icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O242-,Diabetes mellitus in pregnancy: Pre-existing malnutrition-related diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24.2,Diabetes mellitus in pregnancy: Pre-existing malnutrition-related diabetes mellitus,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),O242,Diabetes mellitus in pregnancy: Pre-existing malnutrition-related diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O242-D,Diabetes mellitus in pregnancy: Pre-existing malnutrition-related diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24.0,Diabetes mellitus in pregnancy: Pre-existing type 1 diabetes mellitus,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),O240-,Diabetes mellitus in pregnancy: Pre-existing type 1 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O240-D,Diabetes mellitus in pregnancy: Pre-existing type 1 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O240,Diabetes mellitus in pregnancy: Pre-existing type 1 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O24.1,Diabetes mellitus in pregnancy: Pre-existing type 2 diabetes mellitus,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),O241,Diabetes mellitus in pregnancy: Pre-existing type 2 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O241-D,Diabetes mellitus in pregnancy: Pre-existing type 2 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),O241-,Diabetes mellitus in pregnancy: Pre-existing type 2 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),31321000119102,Diabetes mellitus type 1 without retinopathy,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),1481000119100,Diabetes mellitus type 2 without retinopathy,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),368521000119107,Disorder of nerve co-occurrent and due to type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),23045005,Insulin dependent diabetes mellitus type 1A,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),28032008,Insulin dependent diabetes mellitus type 1B,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),237599002,Insulin treated type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),722454003,"Intellectual disability, craniofacial dysmorphism, hypogonadism, diabetes mellitus syndrome",snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),426875007,Latent autoimmune diabetes mellitus in adult,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),609563008,Pre-existing diabetes mellitus in pregnancy,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),199229001,Pre-existing type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),609564002,Pre-existing type 1 diabetes mellitus in pregnancy,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),199230006,Pre-existing type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),609567009,Pre-existing type 2 diabetes mellitus in pregnancy,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),609566000,Pregnancy and type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),237627000,Pregnancy and type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),46635009,Type 1 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E10X,Type 1 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.0,Type 1 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10,Type 1 diabetes mellitus,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E10X-,Type 1 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E100,Type 1 diabetes mellitus - With coma,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E100-D,Type 1 diabetes mellitus - With coma,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.0,Type 1 diabetes mellitus - With coma,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E100-,Type 1 diabetes mellitus - With coma,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E101-,Type 1 diabetes mellitus - With ketoacidosis,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E101,Type 1 diabetes mellitus - With ketoacidosis,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.1,Type 1 diabetes mellitus - With ketoacidosis,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E101-D,Type 1 diabetes mellitus - With ketoacidosis,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E107,Type 1 diabetes mellitus - With multiple complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.7,Type 1 diabetes mellitus - With multiple complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E107-,Type 1 diabetes mellitus - With multiple complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E107-D,Type 1 diabetes mellitus - With multiple complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E104-,Type 1 diabetes mellitus - With neurological complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E104-D,Type 1 diabetes mellitus - With neurological complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E104,Type 1 diabetes mellitus - With neurological complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.4,Type 1 diabetes mellitus - With neurological complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E103,Type 1 diabetes mellitus - With ophthalmic complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E103-,Type 1 diabetes mellitus - With ophthalmic complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E103-D,Type 1 diabetes mellitus - With ophthalmic complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.3,Type 1 diabetes mellitus - With ophthalmic complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E10.6,Type 1 diabetes mellitus - With other specified complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E106,Type 1 diabetes mellitus - With other specified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E106-,Type 1 diabetes mellitus - With other specified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E106-D,Type 1 diabetes mellitus - With other specified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E105-,Type 1 diabetes mellitus - With peripheral circulatory complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.5,Type 1 diabetes mellitus - With peripheral circulatory complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E105,Type 1 diabetes mellitus - With peripheral circulatory complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E105-D,Type 1 diabetes mellitus - With peripheral circulatory complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E102,Type 1 diabetes mellitus - With renal complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.2,Type 1 diabetes mellitus - With renal complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E102-,Type 1 diabetes mellitus - With renal complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E102-D,Type 1 diabetes mellitus - With renal complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E108-D,Type 1 diabetes mellitus - With unspecified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.8,Type 1 diabetes mellitus - With unspecified complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E108,Type 1 diabetes mellitus - With unspecified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E108-,Type 1 diabetes mellitus - With unspecified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E109-,Type 1 diabetes mellitus - Without complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E109,Type 1 diabetes mellitus - Without complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E10.9,Type 1 diabetes mellitus - Without complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E109-D,Type 1 diabetes mellitus - Without complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),190372001,Type 1 diabetes mellitus maturity onset,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),190368000,Type 1 diabetes mellitus with ulcer,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),313435000,Type 1 diabetes mellitus without complication,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),44054006,Type 2 diabetes mellitus,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E11X,Type 2 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.0,Type 2 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11,Type 2 diabetes mellitus,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E11X-,Type 2 diabetes mellitus,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E110-D,Type 2 diabetes mellitus - With coma,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.0,Type 2 diabetes mellitus - With coma,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E110,Type 2 diabetes mellitus - With coma,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E110-,Type 2 diabetes mellitus - With coma,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E111-D,Type 2 diabetes mellitus - With ketoacidosis,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.1,Type 2 diabetes mellitus - With ketoacidosis,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E111-,Type 2 diabetes mellitus - With ketoacidosis,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E111,Type 2 diabetes mellitus - With ketoacidosis,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E117,Type 2 diabetes mellitus - With multiple complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E117-D,Type 2 diabetes mellitus - With multiple complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.7,Type 2 diabetes mellitus - With multiple complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E117-,Type 2 diabetes mellitus - With multiple complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E114,Type 2 diabetes mellitus - With neurological complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E114-,Type 2 diabetes mellitus - With neurological complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.4,Type 2 diabetes mellitus - With neurological complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E114-D,Type 2 diabetes mellitus - With neurological complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E113-D,Type 2 diabetes mellitus - With ophthalmic complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E113,Type 2 diabetes mellitus - With ophthalmic complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.3,Type 2 diabetes mellitus - With ophthalmic complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E113-,Type 2 diabetes mellitus - With ophthalmic complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E116-D,Type 2 diabetes mellitus - With other specified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.6,Type 2 diabetes mellitus - With other specified complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E116-,Type 2 diabetes mellitus - With other specified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E116,Type 2 diabetes mellitus - With other specified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E115-D,Type 2 diabetes mellitus - With peripheral circulatory complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E115,Type 2 diabetes mellitus - With peripheral circulatory complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E115-,Type 2 diabetes mellitus - With peripheral circulatory complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.5,Type 2 diabetes mellitus - With peripheral circulatory complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E112,Type 2 diabetes mellitus - With renal complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.2,Type 2 diabetes mellitus - With renal complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E112-D,Type 2 diabetes mellitus - With renal complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E112-,Type 2 diabetes mellitus - With renal complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E118,Type 2 diabetes mellitus - With unspecified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E118-,Type 2 diabetes mellitus - With unspecified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E118-D,Type 2 diabetes mellitus - With unspecified complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E11.8,Type 2 diabetes mellitus - With unspecified complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E11.9,Type 2 diabetes mellitus - Without complications,icd10,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),E119,Type 2 diabetes mellitus - Without complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E119-,Type 2 diabetes mellitus - Without complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),E119-D,Type 2 diabetes mellitus - Without complications,icd10,MSD106,True
+-- MAGIC Diabetes (type 1 or type 2),359642000,Type 2 diabetes mellitus in nonobese,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),81531005,Type 2 diabetes mellitus in obese,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),190389009,Type 2 diabetes mellitus with ulcer,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),313436004,Type 2 diabetes mellitus without complication,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),703137001,Type I diabetes mellitus in remission,snomed,MSD106,False
+-- MAGIC Diabetes (type 1 or type 2),703138006,Type II diabetes mellitus in remission,snomed,MSD106,False
+-- MAGIC History of eclampsia,15938005,Eclampsia,snomed,MSD108,False
+-- MAGIC History of eclampsia,O15.0,Eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O15X,Eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O15X-,Eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O15,Eclampsia,icd10,MSD108,False
+-- MAGIC History of eclampsia,198990007,Eclampsia - delivered,snomed,MSD108,False
+-- MAGIC History of eclampsia,198991006,Eclampsia - delivered with postnatal complication,snomed,MSD108,False
+-- MAGIC History of eclampsia,69909000,Eclampsia added to pre-existing hypertension,snomed,MSD108,False
+-- MAGIC History of eclampsia,237283007,Eclampsia in labour,snomed,MSD108,False
+-- MAGIC History of eclampsia,O151,Eclampsia in labour,icd10,MSD108,True
+-- MAGIC History of eclampsia,O15.1,Eclampsia in labour,icd10,MSD108,False
+-- MAGIC History of eclampsia,O151-,Eclampsia in labour,icd10,MSD108,True
+-- MAGIC History of eclampsia,O151-D,Eclampsia in labour,icd10,MSD108,True
+-- MAGIC History of eclampsia,198992004,Eclampsia in pregnancy,snomed,MSD108,False
+-- MAGIC History of eclampsia,O150-,Eclampsia in pregnancy,icd10,MSD108,True
+-- MAGIC History of eclampsia,O150-D,Eclampsia in pregnancy,icd10,MSD108,True
+-- MAGIC History of eclampsia,O15.0,Eclampsia in pregnancy,icd10,MSD108,False
+-- MAGIC History of eclampsia,O150,Eclampsia in pregnancy,icd10,MSD108,True
+-- MAGIC History of eclampsia,303063000,Eclampsia in puerperium,snomed,MSD108,False
+-- MAGIC History of eclampsia,O152-,Eclampsia in the puerperium,icd10,MSD108,True
+-- MAGIC History of eclampsia,O152-D,Eclampsia in the puerperium,icd10,MSD108,True
+-- MAGIC History of eclampsia,O15.2,Eclampsia in the puerperium,icd10,MSD108,False
+-- MAGIC History of eclampsia,O152,Eclampsia in the puerperium,icd10,MSD108,True
+-- MAGIC History of eclampsia,198993009,Eclampsia with postnatal complication,snomed,MSD108,False
+-- MAGIC History of eclampsia,10752641000119102,Eclampsia with pre-existing hypertension in childbirth,snomed,MSD108,False
+-- MAGIC History of eclampsia,O159-D,"Eclampsia, unspecified as to time period",icd10,MSD108,True
+-- MAGIC History of eclampsia,O15.9,"Eclampsia, unspecified as to time period",icd10,MSD108,False
+-- MAGIC History of eclampsia,O159,"Eclampsia, unspecified as to time period",icd10,MSD108,True
+-- MAGIC History of eclampsia,O159-,"Eclampsia, unspecified as to time period",icd10,MSD108,True
+-- MAGIC History of eclampsia,700190003,Family history of pre-eclampsia,snomed,MSD108,False
+-- MAGIC History of eclampsia,O14.2,HELLP syndrome,icd10,MSD108,False
+-- MAGIC History of eclampsia,O142-D,HELLP syndrome,icd10,MSD108,True
+-- MAGIC History of eclampsia,O142-,HELLP syndrome,icd10,MSD108,True
+-- MAGIC History of eclampsia,O142,HELLP syndrome,icd10,MSD108,True
+-- MAGIC History of eclampsia,95605009,Haemolysis-elevated liver enzymes-low platelet count syndrome,snomed,MSD108,False
+-- MAGIC History of eclampsia,41114007,Mild pre-eclampsia,snomed,MSD108,False
+-- MAGIC History of eclampsia,O14.0,Mild to moderate pre-eclampsia,icd10,MSD108,False
+-- MAGIC History of eclampsia,O140,Mild to moderate pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O140-D,Mild to moderate pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O140-,Mild to moderate pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,765182005,Postpartum pre-eclampsia,snomed,MSD108,False
+-- MAGIC History of eclampsia,398254007,Pre-eclampsia,snomed,MSD108,False
+-- MAGIC History of eclampsia,O14X-,Pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O14.0,Pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O14,Pre-eclampsia,icd10,MSD108,False
+-- MAGIC History of eclampsia,O14X,Pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,67359005,Pre-eclampsia added to pre-existing hypertension,snomed,MSD108,False
+-- MAGIC History of eclampsia,198997005,Pre-eclampsia or eclampsia with pre-existing hypertension,snomed,MSD108,False
+-- MAGIC History of eclampsia,198999008,Pre-eclampsia or eclampsia with pre-existing hypertension - delivered,snomed,MSD108,False
+-- MAGIC History of eclampsia,199000005,Pre-eclampsia or eclampsia with pre-existing hypertension - delivered with postnatal complication,snomed,MSD108,False
+-- MAGIC History of eclampsia,199002002,Pre-eclampsia or eclampsia with pre-existing hypertension - not delivered,snomed,MSD108,False
+-- MAGIC History of eclampsia,199003007,Pre-eclampsia or eclampsia with pre-existing hypertension with postnatal complication,snomed,MSD108,False
+-- MAGIC History of eclampsia,O149-D,"Pre-eclampsia, unspecified",icd10,MSD108,True
+-- MAGIC History of eclampsia,O14.9,"Pre-eclampsia, unspecified",icd10,MSD108,False
+-- MAGIC History of eclampsia,O149-,"Pre-eclampsia, unspecified",icd10,MSD108,True
+-- MAGIC History of eclampsia,O149,"Pre-eclampsia, unspecified",icd10,MSD108,True
+-- MAGIC History of eclampsia,46764007,Severe pre-eclampsia,snomed,MSD108,False
+-- MAGIC History of eclampsia,O141,Severe pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O14.1,Severe pre-eclampsia,icd10,MSD108,False
+-- MAGIC History of eclampsia,O141-D,Severe pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,O141-,Severe pre-eclampsia,icd10,MSD108,True
+-- MAGIC History of eclampsia,198983002,Severe pre-eclampsia - delivered,snomed,MSD108,False
+-- MAGIC History of eclampsia,198984008,Severe pre-eclampsia - delivered with postnatal complication,snomed,MSD108,False
+-- MAGIC History of eclampsia,198985009,Severe pre-eclampsia - not delivered,snomed,MSD108,False
+-- MAGIC History of eclampsia,198986005,Severe pre-eclampsia with postnatal complication,snomed,MSD108,False
+-- MAGIC Hypertension in previous pregnancy,37618003,Chronic hypertension complicating AND/OR reason for care during pregnancy,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,24042004,Chronic hypertension complicating AND/OR reason for care during puerperium,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,15938005,Eclampsia,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198990007,Eclampsia - delivered,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198991006,Eclampsia - delivered with postnatal complication,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,69909000,Eclampsia added to pre-existing hypertension,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,237283007,Eclampsia in labour,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198992004,Eclampsia in pregnancy,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,303063000,Eclampsia in puerperium,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198993009,Eclampsia with postnatal complication,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,10752641000119102,Eclampsia with pre-existing hypertension in childbirth,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,95605009,Haemolysis-elevated liver enzymes-low platelet count syndrome,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,709881001,History of gestational hypertension (situation),snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,82771000119102,Hypertension complicating pregnancy,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198941007,"Hypertension complicating pregnancy, childbirth and the puerperium",snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,541000119105,"Hypertension complicating pregnancy, childbirth and the puerperium, antepartum",snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,O11.0,Hypertension in previous pregnancy,icd10,MSD107,True
+-- MAGIC Hypertension in previous pregnancy,O11X-,Hypertension in previous pregnancy,icd10,MSD107,True
+-- MAGIC Hypertension in previous pregnancy,O11,Hypertension in previous pregnancy,icd10,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,O11X,Hypertension in previous pregnancy,icd10,MSD107,True
+-- MAGIC Hypertension in previous pregnancy,698640000,Hypertension in the puerperium with pulmonary oedema,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,48552006,Hypertension secondary to renal disease complicating AND/OR reason for care during pregnancy,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,237282002,Impending eclampsia,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,288250001,Maternal hypertension,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,41114007,Mild pre-eclampsia,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,237281009,Moderate proteinuric hypertension of pregnancy,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,307632004,Non-proteinuric hypertension of pregnancy,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,765182005,Postpartum pre-eclampsia,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,40521000119100,Postpartum pregnancy-induced hypertension,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,398254007,Pre-eclampsia,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,67359005,Pre-eclampsia added to pre-existing hypertension,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198997005,Pre-eclampsia or eclampsia with pre-existing hypertension,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198999008,Pre-eclampsia or eclampsia with pre-existing hypertension - delivered,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,199000005,Pre-eclampsia or eclampsia with pre-existing hypertension - delivered with postnatal complication,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,199002002,Pre-eclampsia or eclampsia with pre-existing hypertension - not delivered,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,199003007,Pre-eclampsia or eclampsia with pre-existing hypertension with postnatal complication,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,10757401000119104,Pre-existing hypertensive heart and chronic kidney disease in mother complicating childbirth,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,199007008,"Pre-existing hypertensive heart and renal disease complicating pregnancy, childbirth and the puerperium",snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,698638005,Pregnancy induced hypertension with pulmonary oedema,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,48194001,Pregnancy-induced hypertension,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198949009,"Renal hypertension complicating pregnancy, childbirth and the puerperium",snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198951008,"Renal hypertension complicating pregnancy, childbirth and the puerperium - delivered",snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198952001,"Renal hypertension complicating pregnancy, childbirth and the puerperium - delivered with postnatal complication",snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198953006,"Renal hypertension complicating pregnancy, childbirth and the puerperium - not delivered",snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,46764007,Severe pre-eclampsia,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198983002,Severe pre-eclampsia - delivered,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198984008,Severe pre-eclampsia - delivered with postnatal complication,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198985009,Severe pre-eclampsia - not delivered,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198986005,Severe pre-eclampsia with postnatal complication,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,15394000,Toxaemia of pregnancy,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,237279007,Transient hypertension of pregnancy,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198965005,Transient hypertension of pregnancy - delivered,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198966006,Transient hypertension of pregnancy - delivered with postnatal complication,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198967002,Transient hypertension of pregnancy - not delivered,snomed,MSD107,False
+-- MAGIC Hypertension in previous pregnancy,198968007,Transient hypertension of pregnancy with postnatal complication,snomed,MSD107,False"""))
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC expected_schema = spark.read.table(f'{outSchema}.aspirin_code_reference').schema
+-- MAGIC aspirin_codes_spdf = spark.createDataFrame(aspirin_codes_df, schema=expected_schema)
+-- MAGIC
+-- MAGIC (
+-- MAGIC   aspirin_codes_spdf
+-- MAGIC   .coalesce(1)  # to force creating a single parquet file
+-- MAGIC   .write
+-- MAGIC   .insertInto(f'{outSchema}.aspirin_code_reference')
+-- MAGIC )

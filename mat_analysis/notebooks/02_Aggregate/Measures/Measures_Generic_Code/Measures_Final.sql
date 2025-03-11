@@ -1,0 +1,129 @@
+-- Databricks notebook source
+-- DBTITLE 1,Reset Widgets
+-- MAGIC %python
+-- MAGIC #dbutils.widgets.removeAll()
+
+-- COMMAND ----------
+
+-- DBTITLE 1,Import modules and Define Widgets
+-- MAGIC %python
+-- MAGIC #dbutils.widgets.text("outSchema", "mat_analysis")
+-- MAGIC source = dbutils.widgets.get("source")
+-- MAGIC print(source)
+-- MAGIC assert(source)
+-- MAGIC outSchema = dbutils.widgets.get("outSchema")
+-- MAGIC print(outSchema)
+-- MAGIC assert(outSchema)
+-- MAGIC dss_corporate = dbutils.widgets.get("dss_corporate")
+-- MAGIC print(dss_corporate)
+-- MAGIC assert(dss_corporate)
+-- MAGIC RPBegindate = dbutils.widgets.get("RPStartDate")
+-- MAGIC print(RPBegindate)
+-- MAGIC assert(RPBegindate)
+-- MAGIC RPEnddate = dbutils.widgets.get("RPEndDate")
+-- MAGIC print(RPEnddate)
+-- MAGIC assert(RPEnddate)
+-- MAGIC
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC AllMeasures = {"Induction":"Provider", "Aspirin_MeetCriteria": "Provider"}
+-- MAGIC NilReturnProviders = {"Induction":"Birth", "Aspirin_MeetCriteria": "Pregnancy"}
+-- MAGIC CurrencyValuesProviders = {"Denominator":"0", "Numerator":"0", "Rate": "0", "Result":"Fail"}
+-- MAGIC
+-- MAGIC NilReturnLocalMaternitySystem = {"Induction":"Birth", "Aspirin_MeetCriteria": "Pregnancy"}
+-- MAGIC CurrencyValuesLocalMaternitySystem = {"Denominator":"0", "Numerator":"0", "Rate": "0"}
+
+-- COMMAND ----------
+
+-- DBTITLE 1,populate measures_csv - this needs to be tested for
+-- MAGIC %python
+-- MAGIC # 4 statements to populate CSV output table
+-- MAGIC for Indicator, OrgLevel in AllMeasures.items():
+-- MAGIC   csvStatement = ("INSERT INTO {outSchema}.Measures_CSV \
+-- MAGIC     SELECT RPStartDate, RPEndDate, IndicatorFamily, Indicator, COALESCE(OrgCodeProvider, 'Not Known'), COALESCE(OrgName, 'Not Known'), OrgLevel, 'Denominator' AS Currency, \
+-- MAGIC     COALESCE(REPLACE(CAST (ROUND(Rounded_Denominator, 1) AS STRING), '.0', ''), '0') AS Value, current_timestamp() as CreatedAt \
+-- MAGIC     FROM {outSchema}.Measures_Aggregated where Indicator = '{indicator}'").format(outSchema=outSchema,indicator=Indicator)
+-- MAGIC   print(csvStatement)
+-- MAGIC   spark.sql(csvStatement)
+-- MAGIC   csvStatement = ("INSERT INTO {outSchema}.Measures_CSV \
+-- MAGIC     SELECT RPStartDate, RPEndDate, IndicatorFamily, Indicator, COALESCE(OrgCodeProvider, 'Not Known'), COALESCE(OrgName, 'Not Known'), OrgLevel, 'Numerator' AS Currency, \
+-- MAGIC     COALESCE(REPLACE(CAST (ROUND(Rounded_Numerator, 1) AS STRING), '.0', ''), '0') AS Value, current_timestamp() as CreatedAt \
+-- MAGIC     FROM {outSchema}.Measures_Aggregated where Indicator = '{indicator}'").format(outSchema=outSchema,indicator=Indicator)
+-- MAGIC   print(csvStatement)
+-- MAGIC   spark.sql(csvStatement)
+-- MAGIC   csvStatement = ("INSERT INTO {outSchema}.Measures_CSV \
+-- MAGIC     SELECT RPStartDate, RPEndDate, IndicatorFamily, Indicator, COALESCE(OrgCodeProvider, 'Not Known'), COALESCE(OrgName, 'Not Known'), OrgLevel, 'Rate' AS Currency, \
+-- MAGIC     COALESCE(REPLACE(CAST (ROUND(Rounded_Rate, 1) AS STRING), '.0', ''), '0') AS Value, current_timestamp() as CreatedAt \
+-- MAGIC     FROM {outSchema}.Measures_Aggregated where Indicator = '{indicator}'").format(outSchema=outSchema,indicator=Indicator)
+-- MAGIC   print(csvStatement)
+-- MAGIC   spark.sql(csvStatement)
+-- MAGIC   #Currently only orgLevel = 'Provider' will have a record for Result inserted.
+-- MAGIC   csvStatement = ("INSERT INTO {outSchema}.Measures_CSV \
+-- MAGIC     SELECT RPStartDate, RPEndDate, IndicatorFamily, Indicator, COALESCE(OrgCodeProvider, 'Not Known'), COALESCE(OrgName, 'Not Known'), OrgLevel, 'Result' AS Currency, \
+-- MAGIC     CASE WHEN (Rounded_Numerator = 0) OR (IsOverDQThreshold = 0) THEN 'Fail' ELSE 'Pass' END AS Value, current_timestamp() as CreatedAt \
+-- MAGIC     FROM {outSchema}.Measures_Aggregated where Indicator = '{indicator}' and OrgLevel = '{OrgLevel}'").format(outSchema=outSchema,indicator=Indicator,OrgLevel = OrgLevel)
+-- MAGIC   print(csvStatement)
+-- MAGIC   spark.sql(csvStatement)
+-- MAGIC for indicator,indicatorFamily in NilReturnProviders.items():
+-- MAGIC   for key,value in CurrencyValuesProviders.items():
+-- MAGIC     csvStatement = ("with orgs as ( \
+-- MAGIC                             select ORG_CODE, NAME \
+-- MAGIC                             from {dss_corporate}.ORG_DAILY \
+-- MAGIC                             where BUSINESS_END_DATE is NULL \
+-- MAGIC                             and org_type_code='TR' \
+-- MAGIC                           ), \
+-- MAGIC                       available_orgs as ( \
+-- MAGIC                            SELECT OrgCodeProvider,TRUST from {outSchema}.Measures_Geographies where Indicator = '{indicator}'), \
+-- MAGIC                       ExpectedProviders as \
+-- MAGIC                       (select orgcodeProvider from {source}.msd000header where RPStartDate = '{RPBegindate}' group by orgcodeProvider) \
+-- MAGIC                       insert into {outSchema}.Measures_CSV \
+-- MAGIC                       SELECT distinct '{RPBegindate}' as RPStartDate, '{RPEnddate}' as RPEndDate, \
+-- MAGIC                       '{indicatorFamily}' as IndicatorFamily, \
+-- MAGIC                       '{indicator}' as Indicator, \
+-- MAGIC                       ExpectedProviders.OrgCodeProvider, \
+-- MAGIC                       COALESCE(orgs.Name, 'Not Found') as OrgName, \
+-- MAGIC                       'Provider' as OrgLevel, \
+-- MAGIC                       '{key}' AS Currency, \
+-- MAGIC                       '{value}' as Value, \
+-- MAGIC                       current_timestamp() as CreatedAt \
+-- MAGIC                       FROM {outSchema}.Measures_Aggregated pa \
+-- MAGIC                       right join ExpectedProviders \
+-- MAGIC                       on pa.OrgCodeProvider = ExpectedProviders.OrgCodeProvider and pa.Indicator = '{indicator}' \
+-- MAGIC                       left join available_orgs \
+-- MAGIC                       on ExpectedProviders.OrgCodeProvider = available_orgs.OrgCodeProvider \
+-- MAGIC                       left join orgs \
+-- MAGIC                       on ExpectedProviders.OrgCodeProvider = orgs.ORG_CODE \
+-- MAGIC                       where pa.OrgCodeProvider is null \
+-- MAGIC                       ").format(outSchema=outSchema,indicator=indicator,indicatorFamily=indicatorFamily,key=key,value=value,RPBegindate=RPBegindate,RPEnddate=RPEnddate,dss_corporate=dss_corporate,source=source)
+-- MAGIC     print(csvStatement);
+-- MAGIC     spark.sql(csvStatement); 
+-- MAGIC for indicator,indicatorFamily in NilReturnLocalMaternitySystem.items():
+-- MAGIC   for key,value in CurrencyValuesLocalMaternitySystem.items():
+-- MAGIC     csvStatement = ("with Expected_LocalMaternitySystem_codes as \
+-- MAGIC                       (select STP_Code, STP_Name from {outSchema}.geogtlrr group by STP_Code, STP_Name), \
+-- MAGIC                       Available_LocalMaternitySystem_codes as \
+-- MAGIC                       (select STP_Code from {outSchema}.measures_geographies where Indicator='{indicator}' and IsOverDQThreshold = 1 group by STP_Code) \
+-- MAGIC                       insert into {outSchema}.Measures_CSV \
+-- MAGIC                       SELECT distinct '{RPBegindate}' as RPStartDate, '{RPEnddate}' as RPEndDate, \
+-- MAGIC                       '{indicatorFamily}' as IndicatorFamily, \
+-- MAGIC                       '{indicator}' as Indicator, \
+-- MAGIC                       expected.STP_Code as OrgCodeProvider, \
+-- MAGIC                       expected.STP_Name as OrgName, \
+-- MAGIC                       'Local Maternity System' as OrgLevel, \
+-- MAGIC                       '{key}' AS Currency, \
+-- MAGIC                       '{value}' as Value, \
+-- MAGIC                       current_timestamp() as CreatedAt \
+-- MAGIC                       FROM Expected_LocalMaternitySystem_codes expected \
+-- MAGIC                       left join Available_LocalMaternitySystem_codes available \
+-- MAGIC                       on expected.STP_Code = available.STP_Code \
+-- MAGIC                       where available.STP_Code is null \
+-- MAGIC                       ").format(outSchema=outSchema,indicator=indicator,indicatorFamily=indicatorFamily,key=key,value=value,RPBegindate=RPBegindate,RPEnddate=RPEnddate,dss_corporate=dss_corporate,source=source)
+-- MAGIC     print(csvStatement);
+-- MAGIC     spark.sql(csvStatement); 
+
+-- COMMAND ----------
+
+-- MAGIC %py
+-- MAGIC dbutils.notebook.exit("Notebook: Measures_Final ran successfully")
